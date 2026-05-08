@@ -1,0 +1,121 @@
+/*
+ * sealed-env Studio · brand stylesheet
+ *
+ * Single source of truth for design tokens. The HTML preview at
+ * docs/design/preview/index.html derives from these same tokens — if
+ * you change a token here, update the preview too (or vice versa).
+ */
+
+:root {
+  /* ── Palette ──────────────────────────────────────────────── */
+  --cream:    #f1ebe0;
+  --cream-2:  #e8e0d2;
+  --cream-3:  #f8f4ec;
+  --ink:      #1a1612;
+  --ink-2:    #4a3f38;
+  --ink-3:    #7d6f64;
+  --wax:      #a8201a;
+  --wax-dark: #7a1411;
+  --wax-soft: #c4471f;
+
+  /* status palette */
+  --status-ok:   #2d6a3a;
+  --status-warn: #c47913;
+  --status-err:  #a8201a;
+
+  /* ── Geometry ─────────────────────────────────────────────── */
+  --radius-sm: 4px;
+  --radius:    8px;
+  --radius-lg: 12px;
+  --radius-pill: 99px;
+
+  --shadow-sm: 0 1px 2px rgba(26, 22, 18, 0.06);
+  --shadow:    0 4px 12px rgba(26, 22, 18, 0.08);
+  --shadow-lg: 0 12px 32px rgba(26, 22, 18, 0.12);
+
+  /* ── Typography ───────────────────────────────────────────── */
+  --font-head: 'Cinzel', 'Trajan Pro', Georgia, serif;
+  --font-body: 'Fraunces', 'Cambria', Georgia, serif;
+  --font-mono: 'JetBrains Mono', 'Menlo', Consolas, monospace;
+
+  /* ── Spacing scale (4px base) ─────────────────────────────── */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s8: 32px;
+}
+
+/* ── Reset ──────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--cream-3);
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+input, textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* ── Reusable utility classes ───────────────────────────────── */
+
+.btn {
+  font-family: var(--font-head);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  padding: var(--s2) var(--s4);
+  border-radius: var(--radius);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.btn--primary {
+  background: var(--wax);
+  color: var(--cream);
+}
+.btn--primary:hover { background: var(--wax-dark); }
+
+.btn--ghost {
+  border: 1px solid rgba(26, 22, 18, 0.15);
+  color: var(--ink);
+}
+.btn--ghost:hover {
+  border-color: var(--ink);
+  background: var(--cream-2);
+}
+
+.btn--small {
+  padding: 4px 10px;
+  font-size: 10px;
+}
+
+.btn--icon {
+  padding: var(--s2) var(--s3);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.mono { font-family: var(--font-mono); }
+.head { font-family: var(--font-head); letter-spacing: 2px; }
+
+.text-muted { color: var(--ink-2); }
+.text-faded { color: var(--ink-3); }
+.text-wax   { color: var(--wax); }
