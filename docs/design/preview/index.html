@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>sealed-env Studio · Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Fraunces:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    rel="stylesheet"
+  />
+  <style>
+    /* ─── Brand tokens ─────────────────────────────────────────── */
+    :root {
+      --cream:    #f1ebe0;
+      --cream-2:  #e8e0d2;
+      --ink:      #1a1612;
+      --ink-2:    #4a3f38;
+      --ink-3:    #7d6f64;
+      --wax:      #a8201a;
+      --wax-dark: #7a1411;
+      --wax-soft: #c4471f;
+
+      --radius:    8px;
+      --radius-lg: 12px;
+
+      --shadow-sm: 0 1px 2px rgba(26, 22, 18, 0.06);
+      --shadow:    0 4px 12px rgba(26, 22, 18, 0.08);
+      --shadow-lg: 0 12px 32px rgba(26, 22, 18, 0.12);
+
+      --font-head: 'Cinzel', 'Trajan Pro', serif;
+      --font-body: 'Fraunces', 'Cambria', serif;
+      --font-mono: 'JetBrains Mono', 'Menlo', monospace;
+    }
+
+    /* ─── Reset ────────────────────────────────────────────────── */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: #f8f4ec;
+      color: var(--ink);
+      font-family: var(--font-body);
+      font-size: 14px;
+      line-height: 1.5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      min-height: 100vh;
+    }
+
+    /* ─── Window chrome (fake desktop app) ─────────────────────── */
+    .app {
+      width: 1100px;
+      max-width: 100%;
+      background: var(--cream);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      height: 720px;
+    }
+
+    .titlebar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: var(--cream-2);
+      border-bottom: 1px solid rgba(26, 22, 18, 0.08);
+      font-size: 12px;
+      color: var(--ink-2);
+    }
+
+    .traffic-lights {
+      display: flex;
+      gap: 8px;
+    }
+    .traffic-lights span {
+      width: 12px; height: 12px; border-radius: 50%;
+      display: block;
+    }
+    .traffic-lights .red    { background: #ff5f57; }
+    .traffic-lights .yellow { background: #febc2e; }
+    .traffic-lights .green  { background: #28c840; }
+
+    .titlebar__title {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      flex: 1;
+      text-align: center;
+      color: var(--ink-2);
+    }
+
+    /* ─── Top bar ─────────────────────────────────────────────── */
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 24px;
+      border-bottom: 1px solid rgba(26, 22, 18, 0.08);
+    }
+
+    .topbar__path {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--ink);
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .topbar__path .icon { color: var(--wax); }
+    .topbar__path .filename { font-weight: 600; }
+
+    .mode-badge {
+      font-family: var(--font-head);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 4px 12px;
+      border-radius: 99px;
+      background: var(--wax);
+      color: var(--cream);
+    }
+    .mode-badge--basic    { background: var(--ink); }
+    .mode-badge--team     { background: var(--wax); }
+    .mode-badge--enterprise {
+      background: var(--ink); color: var(--cream);
+      box-shadow: inset 0 0 0 2px var(--wax);
+    }
+
+    /* ─── Toolbar ─────────────────────────────────────────────── */
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      padding: 12px 24px;
+      background: var(--cream);
+      border-bottom: 1px solid rgba(26, 22, 18, 0.08);
+      align-items: center;
+    }
+
+    .search {
+      flex: 1;
+      position: relative;
+    }
+    .search input {
+      width: 100%;
+      padding: 8px 12px 8px 36px;
+      border: 1px solid rgba(26, 22, 18, 0.15);
+      border-radius: var(--radius);
+      background: #fcfaf5;
+      color: var(--ink);
+      font-family: var(--font-body);
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .search input:focus {
+      border-color: var(--wax);
+      box-shadow: 0 0 0 3px rgba(168, 32, 26, 0.12);
+    }
+    .search::before {
+      content: '⌕';
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--ink-3);
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .btn {
+      font-family: var(--font-head);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      padding: 8px 16px;
+      border-radius: var(--radius);
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s;
+      background: transparent;
+      color: var(--ink);
+    }
+    .btn--primary {
+      background: var(--wax);
+      color: var(--cream);
+    }
+    .btn--primary:hover {
+      background: var(--wax-dark);
+    }
+    .btn--ghost {
+      border: 1px solid rgba(26, 22, 18, 0.15);
+    }
+    .btn--ghost:hover {
+      border-color: var(--ink);
+      background: var(--cream-2);
+    }
+    .btn--icon {
+      padding: 8px 12px;
+      font-size: 16px;
+      line-height: 1;
+    }
+
+    /* ─── Main content ───────────────────────────────────────── */
+    .main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    .table-wrap {
+      flex: 1;
+      overflow: auto;
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .table th {
+      text-align: left;
+      padding: 14px 24px;
+      font-family: var(--font-head);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      background: var(--cream);
+      border-bottom: 1px solid rgba(26, 22, 18, 0.08);
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    .table td {
+      padding: 14px 24px;
+      border-bottom: 1px solid rgba(26, 22, 18, 0.05);
+      vertical-align: middle;
+    }
+
+    .table tbody tr {
+      transition: background 0.1s;
+    }
+    .table tbody tr:hover {
+      background: rgba(168, 32, 26, 0.04);
+    }
+
+    .key {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+
+    .value {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--ink-2);
+      letter-spacing: 0.5px;
+    }
+    .value--masked {
+      letter-spacing: 2px;
+      color: var(--ink-3);
+    }
+
+    .row-actions {
+      display: flex;
+      gap: 6px;
+      justify-content: flex-end;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .table tbody tr:hover .row-actions {
+      opacity: 1;
+    }
+    .row-actions .btn {
+      padding: 4px 10px;
+      font-size: 10px;
+    }
+
+    /* ─── Sidebar (Health panel) ─────────────────────────────── */
+    .sidebar {
+      width: 280px;
+      background: var(--cream-2);
+      border-left: 1px solid rgba(26, 22, 18, 0.08);
+      padding: 20px;
+      overflow-y: auto;
+    }
+
+    .sidebar h3 {
+      font-family: var(--font-head);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--ink-2);
+      margin-bottom: 16px;
+    }
+
+    .check {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      padding: 10px 0;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .check + .check {
+      border-top: 1px solid rgba(26, 22, 18, 0.06);
+    }
+
+    .check__icon {
+      width: 18px; height: 18px;
+      flex-shrink: 0;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--cream);
+      margin-top: 1px;
+    }
+    .check__icon--ok   { background: #2d6a3a; }
+    .check__icon--warn { background: #c47913; }
+    .check__icon--err  { background: var(--wax); }
+
+    .check__body { flex: 1; }
+    .check__title { font-weight: 600; color: var(--ink); }
+    .check__hint  { color: var(--ink-3); font-style: italic; margin-top: 2px; }
+    .check__fix {
+      display: inline-block;
+      margin-top: 6px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--wax);
+      cursor: pointer;
+      border-bottom: 1px dashed var(--wax);
+    }
+
+    /* ─── Footer ─────────────────────────────────────────────── */
+    .footer {
+      padding: 10px 24px;
+      background: var(--cream-2);
+      border-top: 1px solid rgba(26, 22, 18, 0.08);
+      font-size: 11px;
+      color: var(--ink-3);
+      font-style: italic;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .footer .stat {
+      font-family: var(--font-mono);
+      font-style: normal;
+    }
+
+    /* ─── Watermark "Preview" ────────────────────────────────── */
+    .preview-tag {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      background: var(--ink);
+      color: var(--cream);
+      font-family: var(--font-head);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 2px;
+      padding: 4px 10px;
+      border-radius: 99px;
+      z-index: 999;
+    }
+  </style>
+</head>
+<body>
+  <span class="preview-tag">DESIGN PREVIEW</span>
+
+  <div class="app">
+    <!-- Title bar -->
+    <div class="titlebar">
+      <div class="traffic-lights">
+        <span class="red"></span>
+        <span class="yellow"></span>
+        <span class="green"></span>
+      </div>
+      <div class="titlebar__title">sealed-env Studio</div>
+      <div style="width: 60px;"></div>
+    </div>
+
+    <!-- Top bar with file path + mode -->
+    <div class="topbar">
+      <div class="topbar__path">
+        <span class="icon">📁</span>
+        <span>~/work/my-app/</span>
+        <span class="filename">.env.sealed</span>
+      </div>
+      <span class="mode-badge mode-badge--team">Team ✓</span>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <div class="search">
+        <input type="text" placeholder="Filter variables..." />
+      </div>
+      <button class="btn btn--ghost">+ Add</button>
+      <button class="btn btn--ghost btn--icon" title="Diff with another file">⇆</button>
+      <button class="btn btn--ghost btn--icon" title="More">⋯</button>
+      <button class="btn btn--primary">Save & Re-seal</button>
+    </div>
+
+    <!-- Main: variable list + sidebar -->
+    <div class="main">
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th style="width: 40%;">Key</th>
+              <th>Value</th>
+              <th style="width: 140px;"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="key">DATABASE_URL</td>
+              <td class="value">postgresql://user:****@db-prod.internal:5432/myapp</td>
+              <td>
+                <div class="row-actions">
+                  <button class="btn btn--ghost">Hide</button>
+                  <button class="btn btn--ghost">Edit</button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="key">STRIPE_KEY</td>
+              <td class="value value--masked">●●●●●●●●●●●●●●●●●●●●●●●●●●●●</td>
+              <td>
+                <div class="row-actions">
+                  <button class="btn btn--ghost">Reveal</button>
+                  <button class="btn btn--ghost">Edit</button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="key">STRIPE_WEBHOOK_SECRET</td>
+              <td class="value value--masked">●●●●●●●●●●●●●●●●●●●●●●●●●●●●</td>
+              <td>
+                <div class="row-actions">
+                  <button class="btn btn--ghost">Reveal</button>
+                  <button class="btn btn--ghost">Edit</button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="key">JWT_SECRET</td>
+              <td class="value value--masked">●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●</td>
+              <td>
+                <div class="row-actions">
+                  <button class="btn btn--ghost">Reveal</button>
+                  <button class="btn btn--ghost">Edit</button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="key">OPENAI_API_KEY</td>
+              <td class="value value--masked">●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●</td>
+              <td>
+                <div class="row-actions">
+                  <button class="btn btn--ghost">Reveal</button>
+                  <button class="btn btn--ghost">Edit</button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="key">SENDGRID_API_KEY</td>
+              <td class="value value--masked">●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●</td>
+              <td>
+                <div class="row-actions">
+                  <button class="btn btn--ghost">Reveal</button>
+                  <button class="btn btn--ghost">Edit</button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="key">REDIS_URL</td>
+              <td class="value">redis://default:****@redis-prod.internal:6379/0</td>
+              <td>
+                <div class="row-actions">
+                  <button class="btn btn--ghost">Hide</button>
+                  <button class="btn btn--ghost">Edit</button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="key">SENTRY_DSN</td>
+              <td class="value value--masked">●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●</td>
+              <td>
+                <div class="row-actions">
+                  <button class="btn btn--ghost">Reveal</button>
+                  <button class="btn btn--ghost">Edit</button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="key">CDN_TOKEN</td>
+              <td class="value value--masked">●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●</td>
+              <td>
+                <div class="row-actions">
+                  <button class="btn btn--ghost">Reveal</button>
+                  <button class="btn btn--ghost">Edit</button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Sidebar: Health panel (sealed-env doctor integration) -->
+      <aside class="sidebar">
+        <h3>· Health ·</h3>
+
+        <div class="check">
+          <div class="check__icon check__icon--ok">✓</div>
+          <div class="check__body">
+            <div class="check__title">.env.sealed valid</div>
+            <div class="check__hint">SEALED-ENV-V1 · 9 keys · argon2id</div>
+          </div>
+        </div>
+
+        <div class="check">
+          <div class="check__icon check__icon--ok">✓</div>
+          <div class="check__body">
+            <div class="check__title">Master key reachable</div>
+            <div class="check__hint">Loaded from .env.local</div>
+          </div>
+        </div>
+
+        <div class="check">
+          <div class="check__icon check__icon--warn">!</div>
+          <div class="check__body">
+            <div class="check__title">.env.local mode 0644</div>
+            <div class="check__hint">Should be 0600 — readable by other users on this machine.</div>
+            <span class="check__fix">[ Fix permissions → ]</span>
+          </div>
+        </div>
+
+        <div class="check">
+          <div class="check__icon check__icon--ok">✓</div>
+          <div class="check__body">
+            <div class="check__title">git ignores .env</div>
+            <div class="check__hint">Plaintext won't leak to commits</div>
+          </div>
+        </div>
+
+        <div class="check">
+          <div class="check__icon check__icon--warn">!</div>
+          <div class="check__body">
+            <div class="check__title">sealed-env 0.0.9 in deps</div>
+            <div class="check__hint">0.1.0 stable available with security fixes</div>
+            <span class="check__fix">[ Upgrade → ]</span>
+          </div>
+        </div>
+
+        <div class="check">
+          <div class="check__icon check__icon--ok">✓</div>
+          <div class="check__body">
+            <div class="check__title">Wire format up to date</div>
+            <div class="check__hint">SEALED-ENV-V1 · frozen</div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- Footer status -->
+    <div class="footer">
+      <span>9 variables · last sealed <span class="stat">2h 14m ago</span> · KDF: argon2id (m=64MB, t=3, p=2)</span>
+      <span class="stat">v0.1.0-pre.1</span>
+    </div>
+  </div>
+
+  <script>
+    // Toggle reveal/hide on button click
+    document.querySelectorAll('.row-actions .btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        if (btn.textContent !== 'Reveal' && btn.textContent !== 'Hide') return;
+        const row = btn.closest('tr');
+        const valueCell = row.querySelector('.value');
+        const isMasked = valueCell.classList.contains('value--masked');
+
+        if (isMasked) {
+          // Demo "reveal"
+          // Placeholder strings deliberately not formatted like real
+          // API keys — pattern-matching scanners (GitHub Push Protection,
+          // TruffleHog, etc.) flag realistic-looking sk_/whsec_ prefixes
+          // even when fake. These say what they are instead.
+          const fakeValues = {
+            STRIPE_KEY: '[demo] would-be-stripe-secret-key-xxxxxxxxxxxx',
+            STRIPE_WEBHOOK_SECRET: '[demo] would-be-stripe-webhook-secret-xxxxxxxxxx',
+            JWT_SECRET: '[demo] would-be-jwt-signing-key-rotate-quarterly',
+            OPENAI_API_KEY: '[demo] would-be-openai-key-xxxxxxxxxxxxxxxxxxxx',
+            SENDGRID_API_KEY: '[demo] would-be-sendgrid-key-xxxxxxxxxxxxxxxxxx',
+            SENTRY_DSN: '[demo] would-be-sentry-dsn-https-xxxxx-ingest-io',
+            CDN_TOKEN: '[demo] would-be-cdn-token-xxxxxxxxxxxxx',
+          };
+          const key = row.querySelector('.key').textContent;
+          if (fakeValues[key]) valueCell.textContent = fakeValues[key];
+          valueCell.classList.remove('value--masked');
+          btn.textContent = 'Hide';
+        } else {
+          const key = row.querySelector('.key').textContent;
+          // Re-mask
+          const len = valueCell.textContent.length;
+          valueCell.textContent = '●'.repeat(Math.min(44, len));
+          valueCell.classList.add('value--masked');
+          btn.textContent = 'Reveal';
+        }
+      });
+    });
+  </script>
+</body>
+</html>

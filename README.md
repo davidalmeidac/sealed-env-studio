@@ -9,7 +9,13 @@
 [![main project](https://img.shields.io/badge/main_project-sealed--env-1a1612?style=flat-square&labelColor=c4471f)](https://github.com/davidalmeidac/sealed-env)
 [![License](https://img.shields.io/badge/license-MIT-1a1612?style=flat-square&labelColor=c4471f)](LICENSE)
 
-[Vision](#vision) · [Roadmap](ROADMAP.md) · [Wireframes](docs/design/wireframes.md) · [Contribute](CONTRIBUTING.md) · [sealed-env (CLI)](https://github.com/davidalmeidac/sealed-env)
+[Vision](#vision) · [Roadmap](ROADMAP.md) · [Wireframes](docs/design/wireframes.md) · [Visual preview](docs/design/preview/) · [Contribute](CONTRIBUTING.md) · [sealed-env (CLI)](https://github.com/davidalmeidac/sealed-env)
+
+<br/>
+
+![sealed-env Studio · variable viewer mockup](docs/design/preview/screenshot.png)
+
+<sub>↑ design preview · open <a href="docs/design/preview/index.html">docs/design/preview/index.html</a> in a browser for the interactive version</sub>
 
 </div>
 
