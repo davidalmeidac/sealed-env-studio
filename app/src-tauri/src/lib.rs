@@ -34,6 +34,14 @@ pub fn run() {
             init::read_env_file,
             init::seal_file,
             init::ensure_gitignore,
+            init::get_recents,
+            init::push_recent,
+            init::remove_recent,
+            init::clear_recents,
+            init::get_settings,
+            init::save_settings,
+            init::open_sealed_file,
+            init::decrypt_vault,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

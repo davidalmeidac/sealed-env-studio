@@ -2,10 +2,13 @@ use crate::sealed::{
     crypto,
     errors::SealedError,
     format::{KdfParams, SealedMode},
-    SealParams,
+    DecryptKeys, SealParams,
 };
+use crate::workspace::{self, AppSettings, RecentEntry};
+use crate::AppState;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use tauri::State;
 
 // ======================================================================
 // Request / Response types
@@ -314,6 +317,233 @@ pub fn ensure_gitignore(req: EnsureGitignoreRequest) -> Result<EnsureGitignoreRe
     Ok(EnsureGitignoreResponse { modified: true })
 }
 
+// ======================================================================
+// Workspace command types
+// ======================================================================
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetRecentsResponse {
+    pub entries: Vec<RecentEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushRecentRequest {
+    pub entry: RecentEntry,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveRecentRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveSettingsRequest {
+    pub settings: AppSettings,
+}
+
+// ======================================================================
+// Vault open + decrypt types
+// ======================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenSealedFileRequest {
+    pub absolute_path: String,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenSealedFileResponse {
+    pub mode: String,
+    pub raw_content: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecryptVaultRequest {
+    pub raw_content: String,
+    pub master_key_hex: String,
+    pub signing_key_hex: Option<String>,
+    pub unseal_token: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParsedVariable {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecryptVaultResponse {
+    pub variables: Vec<ParsedVariable>,
+    pub kdf: String,
+    pub created: String,
+}
+
+// ======================================================================
+// Workspace Tauri command handlers
+// ======================================================================
+
+fn recents_path(state: &AppState) -> Result<std::path::PathBuf, SealedError> {
+    let guard = state.app_data_dir.lock().unwrap();
+    let dir = guard
+        .as_ref()
+        .ok_or_else(|| SealedError::ValidationError("app_data_dir not initialised".to_string()))?;
+    Ok(dir.join("recents.json"))
+}
+
+fn settings_path(state: &AppState) -> Result<std::path::PathBuf, SealedError> {
+    let guard = state.app_data_dir.lock().unwrap();
+    let dir = guard
+        .as_ref()
+        .ok_or_else(|| SealedError::ValidationError("app_data_dir not initialised".to_string()))?;
+    Ok(dir.join("settings.json"))
+}
+
+/// Return the current recents list.
+#[tauri::command]
+pub fn get_recents(state: State<'_, AppState>) -> Result<GetRecentsResponse, SealedError> {
+    let path = recents_path(&state)?;
+    let entries = workspace::load_recents(&path);
+    Ok(GetRecentsResponse { entries })
+}
+
+/// Add or update an entry in the recents list.
+#[tauri::command]
+pub fn push_recent(
+    req: PushRecentRequest,
+    state: State<'_, AppState>,
+) -> Result<(), SealedError> {
+    let path = recents_path(&state)?;
+    workspace::push_recent(&path, req.entry)
+        .map_err(|e| SealedError::ValidationError(e.to_string()))
+}
+
+/// Remove a recent entry by id.
+#[tauri::command]
+pub fn remove_recent(
+    req: RemoveRecentRequest,
+    state: State<'_, AppState>,
+) -> Result<(), SealedError> {
+    let path = recents_path(&state)?;
+    workspace::remove_recent(&path, &req.id)
+        .map_err(|e| SealedError::ValidationError(e.to_string()))
+}
+
+/// Clear all recents.
+#[tauri::command]
+pub fn clear_recents(state: State<'_, AppState>) -> Result<(), SealedError> {
+    let path = recents_path(&state)?;
+    workspace::clear_recents(&path)
+        .map_err(|e| SealedError::ValidationError(e.to_string()))
+}
+
+/// Return the current app settings.
+#[tauri::command]
+pub fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, SealedError> {
+    let path = settings_path(&state)?;
+    Ok(workspace::load_settings(&path))
+}
+
+/// Persist app settings.
+#[tauri::command]
+pub fn save_settings(
+    req: SaveSettingsRequest,
+    state: State<'_, AppState>,
+) -> Result<(), SealedError> {
+    let path = settings_path(&state)?;
+    workspace::save_settings(&path, &req.settings)
+        .map_err(|e| SealedError::ValidationError(e.to_string()))
+}
+
+// ======================================================================
+// Vault open + decrypt Tauri command handlers
+// ======================================================================
+
+/// Read a .env.sealed file and return its mode + raw content.
+/// Does NOT decrypt. Used to show the UnlockDialog with the correct mode.
+#[tauri::command]
+pub fn open_sealed_file(req: OpenSealedFileRequest) -> Result<OpenSealedFileResponse, SealedError> {
+    let raw = std::fs::read_to_string(&req.absolute_path)
+        .map_err(|e| SealedError::ValidationError(e.to_string()))?;
+
+    // Parse just the header line to extract the mode (no crypto yet).
+    let first_line = raw.lines().next().unwrap_or("");
+    let mode_str = first_line
+        .strip_prefix("SEALED-ENV-V1 MODE=")
+        .ok_or(SealedError::FormatInvalid)?;
+
+    // Validate the mode is one of the three known values.
+    match mode_str {
+        "basic" | "team" | "enterprise" => {}
+        _ => return Err(SealedError::FormatInvalid),
+    }
+
+    Ok(OpenSealedFileResponse {
+        mode: mode_str.to_string(),
+        raw_content: raw,
+    })
+}
+
+/// Decrypt a sealed vault (raw content already loaded) and return parsed variables.
+#[tauri::command]
+pub fn decrypt_vault(
+    req: DecryptVaultRequest,
+    state: State<'_, AppState>,
+) -> Result<DecryptVaultResponse, SealedError> {
+    let master_key = validate_hex(&req.master_key_hex, 32)?;
+
+    let signing_key = req
+        .signing_key_hex
+        .as_deref()
+        .map(|s| validate_hex(s, 32))
+        .transpose()?;
+
+    let keys = DecryptKeys {
+        master_key,
+        signing_key,
+        unseal_token: req.unseal_token,
+    };
+
+    // decrypt() needs a mutable OpsCache for token replay protection.
+    let mut ops_cache = state.ops_cache.lock().unwrap();
+    let plaintext = crate::sealed::decrypt(&req.raw_content, keys, &mut ops_cache)?;
+
+    // Parse plaintext into key-value pairs.
+    let pairs = crate::sealed::parse_dotenv(&plaintext);
+    let variables = pairs
+        .into_iter()
+        .map(|(key, value)| ParsedVariable { key, value })
+        .collect();
+
+    // Extract KDF and CREATED from the raw content for display.
+    let mut kdf = String::new();
+    let mut created = String::new();
+    for line in req.raw_content.lines() {
+        if let Some(v) = line.strip_prefix("KDF=") {
+            kdf = v.to_string();
+        } else if let Some(v) = line.strip_prefix("KDF-PARAMS=") {
+            if !kdf.is_empty() {
+                kdf = format!("{} ({})", kdf, v);
+            }
+        } else if let Some(v) = line.strip_prefix("CREATED=") {
+            created = v.to_string();
+        }
+    }
+
+    Ok(DecryptVaultResponse {
+        variables,
+        kdf,
+        created,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,5 +624,50 @@ mod tests {
         assert_eq!(resp.detected_templates.len(), 1);
         assert_eq!(resp.detected_templates[0].file_name, ".env.example");
         assert_eq!(resp.existing_sealed_files.len(), 1);
+    }
+
+    #[test]
+    fn open_sealed_file_returns_mode_and_content() {
+        use tempfile::TempDir;
+        use std::fs;
+        let dir = TempDir::new().unwrap();
+        let sealed_content = "SEALED-ENV-V1 MODE=team\nKDF=argon2id\nKDF-PARAMS=t=3,m=65536,p=4\nSALT=AAAA\nNONCE=BBBB\nAAD-DIGEST=CCCC\nHMAC=DDDD\nCREATED=2026-01-01T00:00:00.000Z\n\nEEEE";
+        let path = dir.path().join("test.env.sealed");
+        fs::write(&path, sealed_content).unwrap();
+
+        let resp = open_sealed_file(OpenSealedFileRequest {
+            absolute_path: path.to_str().unwrap().to_string(),
+        })
+        .unwrap();
+
+        assert_eq!(resp.mode, "team");
+        assert!(resp.raw_content.starts_with("SEALED-ENV-V1 MODE=team"));
+    }
+
+    #[test]
+    fn open_sealed_file_rejects_unknown_mode() {
+        use tempfile::TempDir;
+        use std::fs;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("bad.env.sealed");
+        fs::write(&path, "SEALED-ENV-V1 MODE=supermode\n").unwrap();
+
+        let result = open_sealed_file(OpenSealedFileRequest {
+            absolute_path: path.to_str().unwrap().to_string(),
+        });
+        assert_eq!(result, Err(SealedError::FormatInvalid));
+    }
+
+    #[test]
+    fn decrypt_vault_rejects_bad_hex() {
+        // The decrypt_vault command uses an AppState. We test the hex validation
+        // path which happens before touching AppState.
+        // We can't easily instantiate a tauri::State in unit tests, so we test
+        // validate_hex directly which is the same path.
+        let result = validate_hex("zzzz", 32);
+        match result {
+            Err(SealedError::ValidationError(_)) => {}
+            other => panic!("expected ValidationError, got {:?}", other),
+        }
     }
 }
