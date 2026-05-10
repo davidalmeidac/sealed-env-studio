@@ -1,0 +1,35 @@
+{
+  "$schema": "../src-tauri/gen/schemas/desktop-schema.json",
+  "productName": "sealed-env-studio",
+  "version": "0.1.0",
+  "identifier": "com.sealed-env-studio.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "sealed-env Studio",
+        "width": 1024,
+        "height": 768,
+        "decorations": false,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
+  },
+  "plugins": {
+    "dialog": {}
+  }
+}
