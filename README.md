@@ -21,10 +21,9 @@
 
 ---
 
-> ⚠️ **This repo is in pre-alpha.** No code yet — only design and
-> vision. Looking for collaborators (Tauri / React / UX) to shape it
-> before the first line is written. Open an issue or send a PR with
-> ideas. The CLI library at [github.com/davidalmeidac/sealed-env](https://github.com/davidalmeidac/sealed-env)
+> ⚠️ **This repo is in pre-alpha.** Phase 1 (read-only viewer) is
+> under active development. The CLI library at
+> [github.com/davidalmeidac/sealed-env](https://github.com/davidalmeidac/sealed-env)
 > is fully shipped and stable at v0.1.0 — Studio is the companion GUI
 > arriving in 0.2.0+ timeframe.
 
@@ -124,9 +123,9 @@ revisit this in design phase.
 ## Status
 
 ```
-■■■■■■■■□□  Phase 0: design + vision           ← we are here
-□□□□□□□□□□  Phase 1: read-only viewer
-□□□□□□□□□□  Phase 2: editor + re-seal
+■■■■■■■■■■  Phase 0: design + vision           ✓ done
+■■■□□□□□□□  Phase 1: read-only viewer          ← in progress
+□□□□□□□□□□  Phase 2: editor + init wizard
 □□□□□□□□□□  Phase 3: visual diff
 □□□□□□□□□□  Phase 4: TOTP enrollment
 □□□□□□□□□□  Phase 5: doctor integration
@@ -135,36 +134,39 @@ revisit this in design phase.
 
 See [ROADMAP.md](ROADMAP.md) for the detailed plan.
 
+## Getting started (development)
+
+```bash
+# Prerequisites: Node 20+, Rust toolchain, Tauri CLI
+cd app
+npm install
+npm run tauri dev   # starts the app in dev mode
+```
+
+Type-check only (no build):
+
+```bash
+cd app && npx tsc --noEmit
+```
+
 ## How to help
 
-We're at the **most leveraged moment of the project** — before the
-first line of code. Feedback now shapes what gets built.
-
-### If you're a designer / UX person
-
-- Open an issue with critique on the [wireframes](docs/design/wireframes.md)
-- Propose interactions for the diff view, the onboarding flow, or
-  the TOTP enrollment screen
-- A few high-fidelity mockups in Figma would be enormous
+Phase 1 is active — the most useful contributions right now:
 
 ### If you're a Tauri / Rust dev
 
-- Comment on the [Stack section](#stack-current-direction) — is
-  Tauri 2.x the right call? Is the Rust port of `sealed-env-core`
-  necessary or can we shell out to the Node CLI?
-- Open a PR for the initial scaffold once design is settled
+- The crypto backend (Rust port of SEALED-ENV-V1) is the critical path — see [SPEC.md in the main repo](https://github.com/davidalmeidac/sealed-env/blob/main/SPEC.md)
+- Cross-stack test vectors live at [`sealed-env/test-vectors/v1/`](https://github.com/davidalmeidac/sealed-env/tree/main/test-vectors/v1) — the Rust implementation must pass all three
 
 ### If you're a React / TypeScript dev
 
-- Suggest UI libraries (shadcn? Radix? custom?)
-- Propose state management (Zustand? Jotai? plain context?)
-- Help build the table-of-secrets component when phase 1 starts
+- Phase 2 components (WelcomeScreen, InitWizard, SettingsModal) are next — open an issue to coordinate
+- The design tokens and brand guidelines are in `app/src/styles/brand.css`
 
 ### If you use `sealed-env` already
 
-- Tell us what's painful about the CLI: open an issue describing the
-  scenario, even one paragraph helps
-- Vote on existing issues so we know what to build first
+- Open an issue describing what's painful about the CLI UX — Studio prioritizes by real friction
+- Vote on existing issues
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 

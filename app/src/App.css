@@ -1,0 +1,304 @@
+/*
+ * App layout — the desktop-app shell.
+ *
+ * Two design intents:
+ *   1. The window chrome should render fine in the browser too,
+ *      so Phase-1 development doesn't need Tauri.
+ *   2. When we wrap with Tauri later, we can hide the .titlebar
+ *      block (Tauri provides its own native titlebar).
+ */
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+/* ── Outer window ─────────────────────────────────────────── */
+.app-shell {
+  width: 1100px;
+  max-width: 100%;
+  height: min(720px, calc(100vh - 48px));
+  background: var(--cream);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  background: var(--cream-2);
+  border-bottom: 1px solid rgba(26, 22, 18, 0.08);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.traffic-lights {
+  display: flex;
+  gap: var(--s2);
+}
+.traffic-lights span {
+  width: 12px; height: 12px; border-radius: 50%;
+  display: block;
+}
+.traffic-lights .red    { background: #ff5f57; }
+.traffic-lights .yellow { background: #febc2e; }
+.traffic-lights .green  { background: #28c840; }
+
+.titlebar__title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  flex: 1;
+  text-align: center;
+  color: var(--ink-2);
+}
+
+/* ── Top bar (file path + mode) ───────────────────────────── */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s4) var(--s6);
+  border-bottom: 1px solid rgba(26, 22, 18, 0.08);
+}
+
+.topbar__path {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink);
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.topbar__path .icon { color: var(--wax); }
+.topbar__path .filename { font-weight: 600; }
+
+.mode-badge {
+  font-family: var(--font-head);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+}
+.mode-badge--basic    { background: var(--ink); color: var(--cream); }
+.mode-badge--team     { background: var(--wax); color: var(--cream); }
+.mode-badge--enterprise {
+  background: var(--ink);
+  color: var(--cream);
+  box-shadow: inset 0 0 0 2px var(--wax);
+}
+
+/* ── Toolbar ──────────────────────────────────────────────── */
+.toolbar {
+  display: flex;
+  gap: var(--s3);
+  padding: var(--s3) var(--s6);
+  background: var(--cream);
+  border-bottom: 1px solid rgba(26, 22, 18, 0.08);
+  align-items: center;
+}
+
+.search {
+  flex: 1;
+  position: relative;
+}
+.search input {
+  width: 100%;
+  padding: var(--s2) var(--s3) var(--s2) 36px;
+  border: 1px solid rgba(26, 22, 18, 0.15);
+  border-radius: var(--radius);
+  background: #fcfaf5;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.search input:focus {
+  border-color: var(--wax);
+  box-shadow: 0 0 0 3px rgba(168, 32, 26, 0.12);
+}
+.search::before {
+  content: '⌕';
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ink-3);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* ── Main: table + sidebar ────────────────────────────────── */
+.main {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.table-wrap {
+  flex: 1;
+  overflow: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th {
+  text-align: left;
+  padding: 14px var(--s6);
+  font-family: var(--font-head);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  background: var(--cream);
+  border-bottom: 1px solid rgba(26, 22, 18, 0.08);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.table td {
+  padding: 14px var(--s6);
+  border-bottom: 1px solid rgba(26, 22, 18, 0.05);
+  vertical-align: middle;
+}
+
+.table tbody tr {
+  transition: background 0.1s;
+}
+.table tbody tr:hover {
+  background: rgba(168, 32, 26, 0.04);
+}
+
+.var-key {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.var-value {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink-2);
+  letter-spacing: 0.5px;
+  word-break: break-all;
+}
+.var-value--masked {
+  letter-spacing: 2px;
+  color: var(--ink-3);
+}
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.table tbody tr:hover .row-actions,
+.table tbody tr:focus-within .row-actions {
+  opacity: 1;
+}
+
+.empty-state {
+  padding: var(--s8) var(--s6);
+  text-align: center;
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+/* ── Health sidebar ───────────────────────────────────────── */
+.sidebar {
+  width: 280px;
+  background: var(--cream-2);
+  border-left: 1px solid rgba(26, 22, 18, 0.08);
+  padding: var(--s5);
+  overflow-y: auto;
+}
+
+.sidebar h3 {
+  font-family: var(--font-head);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin-bottom: var(--s4);
+}
+
+.check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.check + .check {
+  border-top: 1px solid rgba(26, 22, 18, 0.06);
+}
+
+.check__icon {
+  width: 18px; height: 18px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--cream);
+  margin-top: 1px;
+}
+.check__icon--ok   { background: var(--status-ok); }
+.check__icon--warn { background: var(--status-warn); }
+.check__icon--err  { background: var(--status-err); }
+
+.check__body { flex: 1; min-width: 0; }
+.check__title { font-weight: 600; color: var(--ink); }
+.check__hint  { color: var(--ink-3); font-style: italic; margin-top: 2px; }
+.check__fix {
+  display: inline-block;
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--wax);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  border-bottom: 1px dashed var(--wax);
+  padding: 0;
+}
+.check__fix:hover { color: var(--wax-dark); border-bottom-color: var(--wax-dark); }
+
+/* ── Footer ───────────────────────────────────────────────── */
+.footer {
+  padding: 10px var(--s6);
+  background: var(--cream-2);
+  border-top: 1px solid rgba(26, 22, 18, 0.08);
+  font-size: 11px;
+  color: var(--ink-3);
+  font-style: italic;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.footer .stat {
+  font-family: var(--font-mono);
+  font-style: normal;
+}

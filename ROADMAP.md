@@ -9,39 +9,34 @@ add a phase.
 
 ---
 
-## Phase 0 — Design + vision  ← current
+## Phase 0 — Design + vision  ✓ done
 
 **Goal:** know exactly what we're building before we write code.
 
 | Deliverable | Status |
 |---|---|
 | Repo + vision README | ✅ |
-| ASCII wireframes for the 6 core screens | 🟡 in progress |
-| Figma mockup of viewer + editor | ⬜ open for collab |
-| Stack decision document (Tauri version, frontend lib) | ⬜ |
-| First-time UX flow document | ⬜ |
-| `sealed-env` CLI integration approach (FFI vs subprocess) | ⬜ |
-
-**Looking for:** designers, UX folks, anyone with strong opinions on
-secret-management UX.
-
-**Exit criteria:** wireframes for the 6 core screens are reviewed by
-at least 3 people from the community.
+| ASCII wireframes for the 6 core screens | ✅ |
+| Stack decision (Tauri 2 + React + Vite + Rust crypto) | ✅ |
+| Brand + design tokens (Sigillum palette, Cinzel/Fraunces/JetBrains Mono) | ✅ |
+| Interactive HTML preview of variable viewer | ✅ |
 
 ---
 
-## Phase 1 — Read-only viewer  (~2 weeks of work)
+## Phase 1 — Read-only viewer  ← in progress
 
 **Goal:** open a `.env.sealed` file, see the variables. Nothing else.
 
-| Deliverable | Notes |
-|---|---|
-| Tauri project scaffold | Rust + React + Vite |
-| File picker for `.env.sealed` | Native dialog |
-| Master key input (env var or paste) | Never persisted |
-| Decrypt + show variable list | Values masked by default, click to reveal |
-| Mode badge: basic / team / enterprise | Visual indicator |
-| File metadata display | Created date, KDF params, mode |
+| Deliverable | Status | Notes |
+|---|---|---|
+| React + Vite + TypeScript scaffold | ✅ | strict + exactOptionalPropertyTypes |
+| Variable Viewer component | ✅ | filter, mask/reveal, mode badge, health sidebar |
+| Tauri project scaffold | 🟡 | src-tauri structure initialized |
+| Rust crypto backend (SEALED-ENV-V1) | ⬜ | must pass test vectors at sealed-env/test-vectors/v1/ |
+| File picker for `.env.sealed` | ⬜ | Native Tauri dialog |
+| Master key input | ⬜ | Never persisted |
+| Wire Rust → TS via Tauri IPC | ⬜ | snake_case → camelCase in lib/*.ts |
+| Welcome screen + unlock dialog | ⬜ | Phase-2 prep |
 
 **Out of scope for phase 1:** editing, diff, TOTP, anything destructive.
 
