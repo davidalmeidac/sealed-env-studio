@@ -1,4 +1,4 @@
-import type { HealthCheck } from '../data/mock';
+import type { HealthCheck } from '../lib/types';
 
 interface Props {
   checks: HealthCheck[];
