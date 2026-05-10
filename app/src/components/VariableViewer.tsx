@@ -63,9 +63,7 @@ export function VariableViewer({ file, filterText }: Props) {
                 revealed={revealed.has(v.key)}
                 onToggleReveal={() => toggleReveal(v.key)}
                 onEdit={() => {
-                  /* Phase 2 — inline editor */
-                  // eslint-disable-next-line no-console
-                  console.log('edit:', v.key);
+                  /* Phase 2 */
                 }}
               />
             ))
