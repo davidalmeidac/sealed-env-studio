@@ -8,9 +8,9 @@ dist/
 build/
 *.tsbuildinfo
 
-# Tauri build output
-src-tauri/target/
-src-tauri/Cargo.lock
+# Tauri build output & generated files
+app/src-tauri/target/
+app/src-tauri/gen/
 
 # Editor / OS
 .DS_Store
@@ -26,6 +26,13 @@ Thumbs.db
 .env.*.local
 *.pem
 *.key
+
+# AI tooling & session artifacts — local only, never commit
+.engram/
+.atl/
+openspec/
+HANDOFF.md
+COORDINATION.md
 
 # Test artifacts
 coverage/
