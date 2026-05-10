@@ -30,9 +30,14 @@ Thumbs.db
 # AI tooling & session artifacts — local only, never commit
 .engram/
 .atl/
+.claude/
 openspec/
 HANDOFF.md
 COORDINATION.md
+
+# Dev logs
+*.dev.log
+app/.dev.log
 
 # Test artifacts
 coverage/
