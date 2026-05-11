@@ -129,15 +129,18 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
 
-      - name: Cache cargo (per OS + target)
+      - name: Cache cargo (per OS)
         uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             app/src-tauri/target
-          key: ${{ runner.os }}-release-${{ matrix.target }}-${{ hashFiles('app/src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-release-${{ matrix.target }}-
+          # matrix.target can contain commas (macOS universal installs both
+          # aarch64-apple-darwin + x86_64-apple-darwin), which actions/cache
+          # rejects in keys. runner.os is already distinct per matrix row.
+          key: ${{ runner.os }}-release-${{ hashFiles('app/src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-release-
 
       - name: Install Linux Tauri dependencies
         if: matrix.os == 'ubuntu-latest'
