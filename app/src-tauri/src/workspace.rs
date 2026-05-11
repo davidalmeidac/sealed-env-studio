@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -66,9 +66,11 @@ pub fn save_recents(recents_path: &Path, entries: Vec<RecentEntry>) -> std::io::
     entries.sort_by(|a, b| b.last_opened_at.cmp(&a.last_opened_at));
     entries.truncate(RECENTS_MAX);
 
-    let file = RecentsFileV1 { version: 1, entries };
-    let json = serde_json::to_string_pretty(&file)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let file = RecentsFileV1 {
+        version: 1,
+        entries,
+    };
+    let json = serde_json::to_string_pretty(&file).map_err(std::io::Error::other)?;
 
     // Atomic write: write to tmp then rename
     let tmp_path = recents_path.with_extension("json.tmp");
@@ -158,8 +160,7 @@ pub fn load_settings(settings_path: &Path) -> AppSettings {
 }
 
 pub fn save_settings(settings_path: &Path, settings: &AppSettings) -> std::io::Result<()> {
-    let json = serde_json::to_string_pretty(settings)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string_pretty(settings).map_err(std::io::Error::other)?;
     let tmp_path = settings_path.with_extension("json.tmp");
     std::fs::write(&tmp_path, &json)?;
     std::fs::rename(&tmp_path, settings_path)
@@ -169,6 +170,7 @@ pub fn save_settings(settings_path: &Path, settings: &AppSettings) -> std::io::R
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     fn temp_recents_path() -> (TempDir, PathBuf) {
@@ -189,7 +191,11 @@ mod tests {
     #[test]
     fn recents_write_read_roundtrip() {
         let (_dir, path) = temp_recents_path();
-        let entry = make_entry("abc-123", "/vault/test.env.sealed", "2026-01-01T00:00:00.000Z");
+        let entry = make_entry(
+            "abc-123",
+            "/vault/test.env.sealed",
+            "2026-01-01T00:00:00.000Z",
+        );
         save_recents(&path, vec![entry.clone()]).unwrap();
         let loaded = load_recents(&path);
         assert_eq!(loaded.len(), 1);
@@ -203,13 +209,19 @@ mod tests {
         for i in 0..11 {
             // Use timestamps that sort clearly: oldest = "2026-01-01", newest = "2026-01-11"
             let ts = format!("2026-01-{:02}T00:00:00.000Z", i + 1);
-            entries.push(make_entry(&format!("id-{}", i), &format!("/vault/{}.sealed", i), &ts));
+            entries.push(make_entry(
+                &format!("id-{}", i),
+                &format!("/vault/{}.sealed", i),
+                &ts,
+            ));
         }
         save_recents(&path, entries).unwrap();
         let loaded = load_recents(&path);
         assert_eq!(loaded.len(), 10);
         // Oldest (2026-01-01) should be evicted
-        assert!(!loaded.iter().any(|e| e.last_opened_at == "2026-01-01T00:00:00.000Z"));
+        assert!(!loaded
+            .iter()
+            .any(|e| e.last_opened_at == "2026-01-01T00:00:00.000Z"));
     }
 
     #[test]

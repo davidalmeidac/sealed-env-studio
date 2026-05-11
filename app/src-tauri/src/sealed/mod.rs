@@ -1,6 +1,6 @@
+pub mod crypto;
 pub mod errors;
 pub mod format;
-pub mod crypto;
 pub mod totp;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -121,19 +121,23 @@ pub fn seal(params: SealParams) -> Result<String, SealedError> {
     let body_b64 = B64.encode(&ciphertext_with_tag);
 
     // Compute HMAC if team/enterprise: HMAC(mac_key, aad + ciphertext)
-    let hmac_b64: Option<String> = if params.mode == SealedMode::Team || params.mode == SealedMode::Enterprise {
-        let signing_key = params.signing_key.as_deref().ok_or(SealedError::MissingKey)?;
-        let mac_key_vec = crypto::hkdf_expand(signing_key, &salt, b"sealed-env:v1:mac", 32);
-        let hmac_input: Vec<u8> = {
-            let mut buf = aad_bytes.to_vec();
-            buf.extend_from_slice(&ciphertext_with_tag);
-            buf
+    let hmac_b64: Option<String> =
+        if params.mode == SealedMode::Team || params.mode == SealedMode::Enterprise {
+            let signing_key = params
+                .signing_key
+                .as_deref()
+                .ok_or(SealedError::MissingKey)?;
+            let mac_key_vec = crypto::hkdf_expand(signing_key, &salt, b"sealed-env:v1:mac", 32);
+            let hmac_input: Vec<u8> = {
+                let mut buf = aad_bytes.to_vec();
+                buf.extend_from_slice(&ciphertext_with_tag);
+                buf
+            };
+            let mac = crypto::hmac_sha256(&mac_key_vec, &hmac_input);
+            Some(B64.encode(mac))
+        } else {
+            None
         };
-        let mac = crypto::hmac_sha256(&mac_key_vec, &hmac_input);
-        Some(B64.encode(mac))
-    } else {
-        None
-    };
 
     // Build output lines (serial format)
     let mut out_lines = vec![magic_line];
@@ -189,8 +193,12 @@ pub fn decrypt(
     let file = format::parse(file_content).map_err(collapse)?;
 
     // Step 2: derive key (dispatch on KDF field)
-    let derived_key = crypto::kdf_derive(&keys.master_key, &decode_b64_field(&file.salt)?, &file.kdf_params)
-        .map_err(collapse)?;
+    let derived_key = crypto::kdf_derive(
+        &keys.master_key,
+        &decode_b64_field(&file.salt)?,
+        &file.kdf_params,
+    )
+    .map_err(collapse)?;
 
     // Step 4: HMAC verify for team + enterprise
     if file.mode == SealedMode::Team || file.mode == SealedMode::Enterprise {
@@ -202,7 +210,8 @@ pub fn decrypt(
 
         // Build HMAC input: the "aad" (magic + metadata without HMAC) + ciphertext_with_tag
         let hmac_input = build_hmac_input_for_file(&file, &ct_bytes);
-        let stored_hmac = decode_b64_field(file.hmac.as_deref().unwrap_or_default()).map_err(collapse)?;
+        let stored_hmac =
+            decode_b64_field(file.hmac.as_deref().unwrap_or_default()).map_err(collapse)?;
         crypto::hmac_verify(&mac_key_vec, &hmac_input, &stored_hmac).map_err(collapse)?;
     }
 
@@ -214,15 +223,16 @@ pub fn decrypt(
             .ok_or(SealedError::MissingKey)?;
 
         // verify_unseal_token returns epoch_bytes if valid
-        let epoch_bytes =
-            totp::verify_unseal_token(token_str, &derived_key, ops_cache)?;
+        let epoch_bytes = totp::verify_unseal_token(token_str, &derived_key, ops_cache)?;
 
         // Verify epoch_commit
         let stored_commit = decode_b64_field(
             file.epoch_commit
                 .as_deref()
-                .ok_or(SealedError::FormatInvalid).map_err(collapse)?,
-        ).map_err(collapse)?;
+                .ok_or(SealedError::FormatInvalid)
+                .map_err(collapse)?,
+        )
+        .map_err(collapse)?;
 
         // epoch_commit = HMAC-SHA256(derived_key, enterprise_epoch || "epoch-commit-v1")
         let mut epoch_and_suffix = epoch_bytes.clone();
@@ -342,9 +352,7 @@ pub fn parse_dotenv(raw: &str) -> Vec<(String, String)> {
 }
 
 fn strip_quotes(s: &str) -> String {
-    if (s.starts_with('"') && s.ends_with('"'))
-        || (s.starts_with('\'') && s.ends_with('\''))
-    {
+    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
         s[1..s.len() - 1].to_string()
     } else {
         s.to_string()
@@ -422,7 +430,10 @@ mod tests {
             &mut cache,
         );
         assert!(result.is_ok(), "team decrypt failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), "API_KEY=cross-stack\nDB_URL=postgres://prod\n");
+        assert_eq!(
+            result.unwrap(),
+            "API_KEY=cross-stack\nDB_URL=postgres://prod\n"
+        );
     }
 
     // enterprise-scrypt-N131072: basic mode with N=131072
@@ -438,8 +449,15 @@ mod tests {
             },
             &mut cache,
         );
-        assert!(result.is_ok(), "scrypt N=131072 decrypt failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), "SEC002_TEST=n131072\nDB_HOST=db.example.com\n");
+        assert!(
+            result.is_ok(),
+            "scrypt N=131072 decrypt failed: {:?}",
+            result.err()
+        );
+        assert_eq!(
+            result.unwrap(),
+            "SEC002_TEST=n131072\nDB_HOST=db.example.com\n"
+        );
     }
 
     // node-enterprise: without a valid token we get MissingKey (proves format parses + HMAC verifies)
@@ -505,7 +523,10 @@ mod tests {
         // Tamper HMAC line
         let hmac_line_pos = sealed.find("HMAC=").unwrap();
         let end = sealed[hmac_line_pos..].find('\n').unwrap() + hmac_line_pos;
-        sealed.replace_range(hmac_line_pos..end, "HMAC=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+        sealed.replace_range(
+            hmac_line_pos..end,
+            "HMAC=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        );
         let mut cache = totp::OpsCache::new();
         let result = decrypt(
             &sealed,
@@ -551,10 +572,13 @@ mod tests {
     fn parse_dotenv_basic() {
         let raw = "API_KEY=hello\nDB_URL=postgres://prod\n";
         let pairs = parse_dotenv(raw);
-        assert_eq!(pairs, vec![
-            ("API_KEY".to_string(), "hello".to_string()),
-            ("DB_URL".to_string(), "postgres://prod".to_string()),
-        ]);
+        assert_eq!(
+            pairs,
+            vec![
+                ("API_KEY".to_string(), "hello".to_string()),
+                ("DB_URL".to_string(), "postgres://prod".to_string()),
+            ]
+        );
     }
 
     #[test]
@@ -575,7 +599,9 @@ mod tests {
     #[test]
     fn sec007_malformed_epoch_token_returns_token_invalid() {
         let malformed_token = "usl_eyJhbGciOiJIUzI1NiIsInR5cCI6InNlYWxlZC1lbnYtdW5zZWFsL3YxIn0.eyJpc3MiOiJzZWFsZWQtZW52LWNsaSIsImlhdCI6MTc3ODQ0NTUwNCwiZXhwIjoxNzc4NDQ5MTA0LCJlcG9jaCI6Ilx0QnNoUWhwcG1UWmwrNmgrR2lvM3VMK3dITC9YdDl2STZyd0ZhbWJsa1k3QT0iLCJkZXBsb3lfaWQiOm51bGwsIm9wc19pZCI6Imdlbi12ZWN0b3ItZml4ZWQtb3BzLWlkIn0.va4l_4z_JGWsxOsG1gG7C4N5IslhS4qq2qY8HbPkTas";
-        let derived_key = hex::decode("3601493fe669cebf7b60ce544266102157f635199a9fc003bb6f136a672856ff").unwrap();
+        let derived_key =
+            hex::decode("3601493fe669cebf7b60ce544266102157f635199a9fc003bb6f136a672856ff")
+                .unwrap();
         let mut key_arr = [0u8; 32];
         key_arr.copy_from_slice(&derived_key);
         let mut cache = totp::OpsCache::new();
@@ -604,7 +630,10 @@ mod tests {
         // Tamper AAD-DIGEST
         let pos = sealed.find("AAD-DIGEST=").unwrap();
         let end = sealed[pos..].find('\n').unwrap() + pos;
-        sealed.replace_range(pos..end, "AAD-DIGEST=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+        sealed.replace_range(
+            pos..end,
+            "AAD-DIGEST=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        );
         let mut cache = totp::OpsCache::new();
         let result = decrypt(
             &sealed,

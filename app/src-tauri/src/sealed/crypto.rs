@@ -35,8 +35,7 @@ pub fn argon2id_derive(
         _ => (ARGON2_T_DEFAULT, ARGON2_M_DEFAULT, ARGON2_P_DEFAULT),
     };
 
-    let argon2_params = Params::new(m, t, p, Some(32))
-        .map_err(|_| SealedError::DecryptFailed)?;
+    let argon2_params = Params::new(m, t, p, Some(32)).map_err(|_| SealedError::DecryptFailed)?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon2_params);
 
     let mut out = [0u8; 32];
@@ -84,17 +83,28 @@ pub fn kdf_derive(
 pub fn hkdf_expand(prk: &[u8], salt: &[u8], info: &[u8], len: usize) -> Vec<u8> {
     let hk = Hkdf::<Sha256>::new(Some(salt), prk);
     let mut out = vec![0u8; len];
-    hk.expand(info, &mut out).expect("HKDF expand length must be valid");
+    hk.expand(info, &mut out)
+        .expect("HKDF expand length must be valid");
     out
 }
 
 /// Encrypt plaintext with AES-256-GCM. Returns ciphertext || 16-byte auth tag.
-pub fn aes256gcm_encrypt(key: &[u8; 32], nonce_bytes: &[u8], plaintext: &[u8], aad: &[u8]) -> Vec<u8> {
+pub fn aes256gcm_encrypt(
+    key: &[u8; 32],
+    nonce_bytes: &[u8],
+    plaintext: &[u8],
+    aad: &[u8],
+) -> Vec<u8> {
     let cipher_key = Key::<Aes256Gcm>::from_slice(key);
     let cipher = Aes256Gcm::new(cipher_key);
     let nonce = Nonce::from_slice(nonce_bytes);
-    let payload = Payload { msg: plaintext, aad };
-    cipher.encrypt(nonce, payload).expect("AES-GCM encrypt must not fail")
+    let payload = Payload {
+        msg: plaintext,
+        aad,
+    };
+    cipher
+        .encrypt(nonce, payload)
+        .expect("AES-GCM encrypt must not fail")
 }
 
 /// Decrypt ciphertext (with appended 16-byte auth tag) using AES-256-GCM.
@@ -107,8 +117,13 @@ pub fn aes256gcm_decrypt(
     let cipher_key = Key::<Aes256Gcm>::from_slice(key);
     let cipher = Aes256Gcm::new(cipher_key);
     let nonce = Nonce::from_slice(nonce_bytes);
-    let payload = Payload { msg: ciphertext_with_tag, aad };
-    cipher.decrypt(nonce, payload).map_err(|_| SealedError::DecryptFailed)
+    let payload = Payload {
+        msg: ciphertext_with_tag,
+        aad,
+    };
+    cipher
+        .decrypt(nonce, payload)
+        .map_err(|_| SealedError::DecryptFailed)
 }
 
 /// Compute HMAC-SHA256.
