@@ -3,6 +3,7 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import QRCode from 'qrcode';
 import type { SealedMode, AppSettings, SealedFileContent } from '../lib/types';
 import { inspectDirectory, readEnvFile, initKeys, sealFile, ensureGitignore } from '../lib/init';
+import { saveVaultCredentials } from '../lib/credstore';
 
 type InitStep = 'folder' | 'mode' | 'source' | 'keys' | 'verify' | 'review';
 
@@ -42,6 +43,10 @@ interface WizardData {
   totpSecretHex: string;
   copiedReminder: boolean;
   gitignoreWillChange: boolean;
+  // Phase-3 credstore opt-in (Tier A)
+  saveToKeychain: boolean;
+  passphrase: string;
+  confirmPassphrase: string;
 }
 
 const emptyData = (): WizardData => ({
@@ -59,7 +64,33 @@ const emptyData = (): WizardData => ({
   totpSecretHex: '',
   copiedReminder: false,
   gitignoreWillChange: false,
+  saveToKeychain: true,
+  passphrase: '',
+  confirmPassphrase: '',
 });
+
+/**
+ * Passphrase strength heuristic. Returns a tuple of `score` (0..4) and a
+ * `label`. Score combines length and character-class variety. Not a true
+ * entropy estimate — just a UX nudge so the operator picks something
+ * stronger than "password123".
+ */
+function passphraseStrength(pp: string): { score: number; label: string } {
+  if (pp.length === 0) return { score: 0, label: '' };
+  let score = 0;
+  if (pp.length >= 8) score++;
+  if (pp.length >= 12) score++;
+  if (pp.length >= 16) score++;
+  const hasUpper = /[A-Z]/.test(pp);
+  const hasLower = /[a-z]/.test(pp);
+  const hasDigit = /\d/.test(pp);
+  const hasSymbol = /[^A-Za-z0-9]/.test(pp);
+  const variety = [hasUpper, hasLower, hasDigit, hasSymbol].filter(Boolean).length;
+  if (variety >= 3) score++;
+  score = Math.min(score, 4);
+  const labels = ['too short', 'weak', 'fair', 'good', 'strong'];
+  return { score, label: labels[score] ?? '' };
+}
 
 function stripComments(content: string): string {
   return content
@@ -284,6 +315,31 @@ export function InitWizard({ settings, onComplete, onCancel }: Props) {
         await ensureGitignore({ folderPath: data.folderPath });
       }
 
+      // Optionally persist keys to the OS credential manager (Tier A).
+      // Failure here is operator-visible (keychain locked, no D-Bus, etc.)
+      // but does NOT abort the seal — the vault on disk is already valid.
+      if (data.saveToKeychain && data.passphrase) {
+        try {
+          await saveVaultCredentials({
+            absolutePath: sealResp.absolutePath,
+            credentials: {
+              master: data.masterKeyHex,
+              ...(data.signingKeyHex ? { signing: data.signingKeyHex } : {}),
+              ...(data.totpSecretHex ? { totp: data.totpSecretHex } : {}),
+              savedAt: new Date().toISOString(),
+            },
+            passphrase: data.passphrase,
+          });
+        } catch (e) {
+          // Surface as a non-blocking warning. The vault is sealed; the
+          // operator can re-try saving from Settings later.
+          setError(
+            `Vault sealed, but saving to credential manager failed: ${e}. ` +
+            `Copy the keys to your password manager and re-save from Settings.`,
+          );
+        }
+      }
+
       // Parse rawContent locally to populate the viewer immediately.
       // The file on disk DOES contain these variables (sealed by Rust);
       // we mirror them here so the viewer doesn't show an empty vault
@@ -332,11 +388,19 @@ export function InitWizard({ settings, onComplete, onCancel }: Props) {
       case 'folder': return data.folderPath.length > 0;
       case 'mode': return true;
       case 'source': return data.rawContent.trim().length > 0;
-      case 'keys':
+      case 'keys': {
         // Enterprise: just need keys generated; verify happens next step.
         // Basic/team: need the "I have copied" checkbox.
-        return data.masterKeyHex.length > 0 &&
+        const baseOk = data.masterKeyHex.length > 0 &&
           (data.mode === 'enterprise' || data.copiedReminder);
+        if (!baseOk) return false;
+        // If opting into keychain save, passphrase must be valid + confirmed.
+        if (data.saveToKeychain) {
+          if (data.passphrase.length < 8) return false;
+          if (data.passphrase !== data.confirmPassphrase) return false;
+        }
+        return true;
+      }
       case 'verify': return data.copiedReminder; // verified === true
       case 'review': return true;
     }
@@ -399,8 +463,14 @@ export function InitWizard({ settings, onComplete, onCancel }: Props) {
             signingKeyHex={data.signingKeyHex}
             totpSecretHex={data.totpSecretHex}
             copiedReminder={data.copiedReminder}
+            saveToKeychain={data.saveToKeychain}
+            passphrase={data.passphrase}
+            confirmPassphrase={data.confirmPassphrase}
             onGenerate={() => { void handleGenerateKeys(); }}
             onCopiedReminderChange={(v) => update({ copiedReminder: v })}
+            onSaveToKeychainChange={(v) => update({ saveToKeychain: v })}
+            onPassphraseChange={(v) => update({ passphrase: v })}
+            onConfirmPassphraseChange={(v) => update({ confirmPassphrase: v })}
             busy={busy}
           />
         )}
@@ -418,6 +488,7 @@ export function InitWizard({ settings, onComplete, onCancel }: Props) {
             folderPath={data.folderPath}
             mode={data.mode}
             gitignoreWillChange={data.gitignoreWillChange}
+            saveToKeychain={data.saveToKeychain}
             variableCount={
               data.rawContent.split('\n').filter((l) => {
                 const t = l.trim();
@@ -621,8 +692,14 @@ function StepKeys({
   signingKeyHex,
   totpSecretHex,
   copiedReminder,
+  saveToKeychain,
+  passphrase,
+  confirmPassphrase,
   onGenerate,
   onCopiedReminderChange,
+  onSaveToKeychainChange,
+  onPassphraseChange,
+  onConfirmPassphraseChange,
   busy,
 }: {
   mode: SealedMode;
@@ -631,8 +708,14 @@ function StepKeys({
   signingKeyHex: string;
   totpSecretHex: string;
   copiedReminder: boolean;
+  saveToKeychain: boolean;
+  passphrase: string;
+  confirmPassphrase: string;
   onGenerate: () => void;
   onCopiedReminderChange: (v: boolean) => void;
+  onSaveToKeychainChange: (v: boolean) => void;
+  onPassphraseChange: (v: string) => void;
+  onConfirmPassphraseChange: (v: string) => void;
   busy: boolean;
 }) {
   const hasKeys = masterKeyHex.length > 0;
@@ -671,6 +754,16 @@ function StepKeys({
             </>
           )}
 
+          <KeychainPanel
+            saveToKeychain={saveToKeychain}
+            passphrase={passphrase}
+            confirmPassphrase={confirmPassphrase}
+            onSaveToKeychainChange={onSaveToKeychainChange}
+            onPassphraseChange={onPassphraseChange}
+            onConfirmPassphraseChange={onConfirmPassphraseChange}
+            busy={busy}
+          />
+
           {mode !== 'enterprise' && (
             <label className="wizard__copy-reminder">
               <input
@@ -682,6 +775,129 @@ function StepKeys({
             </label>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Phase-3 credstore opt-in. Two radio options:
+ *  - Save to system credential manager (default): passphrase-wrap the keys,
+ *    persist in the OS keychain. Future unlocks need only passphrase + 6-digit code.
+ *  - I'll back these up myself: nothing persisted by Studio. Operator is fully
+ *    responsible for copying keys to a password manager.
+ *
+ * Validation lives in canAdvance(): if saveToKeychain is true, passphrase must
+ * be >= 8 chars and match confirmPassphrase. The Next button stays disabled
+ * until both conditions hold.
+ */
+function KeychainPanel({
+  saveToKeychain,
+  passphrase,
+  confirmPassphrase,
+  onSaveToKeychainChange,
+  onPassphraseChange,
+  onConfirmPassphraseChange,
+  busy,
+}: {
+  saveToKeychain: boolean;
+  passphrase: string;
+  confirmPassphrase: string;
+  onSaveToKeychainChange: (v: boolean) => void;
+  onPassphraseChange: (v: string) => void;
+  onConfirmPassphraseChange: (v: string) => void;
+  busy: boolean;
+}) {
+  const strength = passphraseStrength(passphrase);
+  const mismatch =
+    confirmPassphrase.length > 0 && passphrase !== confirmPassphrase;
+
+  return (
+    <div className="wizard__keychain">
+      <div className="wizard__keychain-options">
+        <label className="settings-group__radio">
+          <input
+            type="radio"
+            name="save-to-keychain"
+            checked={saveToKeychain}
+            onChange={() => onSaveToKeychainChange(true)}
+            disabled={busy}
+          />
+          <span className="settings-group__radio-marker" aria-hidden="true" />
+          <span>
+            <strong>Save to system credential manager</strong>
+            <span className="wizard__keychain-hint">
+              Encrypted with a passphrase. Future unlocks only need
+              the passphrase {' '}
+              <em>(plus the 6-digit code for enterprise vaults)</em>.
+            </span>
+          </span>
+        </label>
+
+        <label className="settings-group__radio">
+          <input
+            type="radio"
+            name="save-to-keychain"
+            checked={!saveToKeychain}
+            onChange={() => onSaveToKeychainChange(false)}
+            disabled={busy}
+          />
+          <span className="settings-group__radio-marker" aria-hidden="true" />
+          <span>
+            <strong>I&apos;ll back these up myself</strong>
+            <span className="wizard__keychain-hint">
+              Studio stores nothing. You paste master + signing + TOTP from
+              your password manager on every unlock.
+            </span>
+          </span>
+        </label>
+      </div>
+
+      {saveToKeychain && (
+        <>
+          <label className="settings-group__field">
+            <span>Passphrase</span>
+            <input
+              type="password"
+              placeholder="At least 8 characters; longer is better"
+              value={passphrase}
+              onChange={(e) => onPassphraseChange(e.target.value)}
+              disabled={busy}
+              autoComplete="new-password"
+            />
+            {passphrase.length > 0 && (
+              <div className={`wizard__strength wizard__strength--s${strength.score}`}>
+                <div className="wizard__strength-bar">
+                  <span style={{ width: `${(strength.score / 4) * 100}%` }} />
+                </div>
+                <span className="wizard__strength-label">{strength.label}</span>
+              </div>
+            )}
+          </label>
+
+          <label className="settings-group__field">
+            <span>Confirm passphrase</span>
+            <input
+              type="password"
+              placeholder="Type the passphrase again"
+              value={confirmPassphrase}
+              onChange={(e) => onConfirmPassphraseChange(e.target.value)}
+              disabled={busy}
+              autoComplete="new-password"
+              className={mismatch ? 'input--error' : ''}
+            />
+            {mismatch && (
+              <span className="field-error">Passphrases do not match.</span>
+            )}
+          </label>
+
+          <p className="wizard__keychain-warning">
+            ⚠ Even when saved, copy the keys to a password manager as recovery.
+            If you forget the passphrase or the credential store is wiped
+            (OS reinstall, new machine), the password manager is your only
+            recovery path.
+          </p>
+        </>
       )}
     </div>
   );
@@ -923,12 +1139,14 @@ function StepReview({
   folderPath,
   mode,
   gitignoreWillChange,
+  saveToKeychain,
   variableCount,
   argon2,
 }: {
   folderPath: string;
   mode: SealedMode;
   gitignoreWillChange: boolean;
+  saveToKeychain: boolean;
   variableCount: number;
   argon2: string;
 }) {
@@ -956,6 +1174,12 @@ function StepReview({
             <dd><code>.env</code> will be appended</dd>
           </>
         )}
+        <dt>Credentials</dt>
+        <dd>
+          {saveToKeychain
+            ? 'Save to system credential manager (passphrase-protected)'
+            : 'Not stored — back these up yourself'}
+        </dd>
       </dl>
     </div>
   );

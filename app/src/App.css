@@ -1589,3 +1589,80 @@ body { display: block; padding: 0; }
   border-radius: var(--radius-sm);
   color: var(--ink);
 }
+
+/* ── Wizard · keychain panel (Phase-3) ─────────────────── */
+.wizard__keychain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  margin-top: var(--s5);
+  padding-top: var(--s5);
+  border-top: 1px dashed rgba(26, 22, 18, 0.15);
+}
+
+.wizard__keychain-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.wizard__keychain-hint {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-body);
+  font-style: italic;
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+.wizard__keychain-hint em {
+  font-style: italic;
+}
+
+.wizard__keychain-warning {
+  font-family: var(--font-body);
+  font-style: italic;
+  font-size: 12px;
+  color: var(--status-warn);
+  background: rgba(196, 121, 19, 0.08);
+  border: 1px solid rgba(196, 121, 19, 0.25);
+  padding: var(--s3);
+  border-radius: var(--radius);
+  line-height: 1.5;
+}
+
+/* Passphrase strength meter */
+.wizard__strength {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: 6px;
+}
+.wizard__strength-bar {
+  flex: 1;
+  height: 4px;
+  background: var(--cream-2);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.wizard__strength-bar span {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  transition: width 0.2s, background 0.2s;
+}
+.wizard__strength--s0 .wizard__strength-bar span,
+.wizard__strength--s1 .wizard__strength-bar span { background: var(--status-err); }
+.wizard__strength--s2 .wizard__strength-bar span { background: var(--status-warn); }
+.wizard__strength--s3 .wizard__strength-bar span,
+.wizard__strength--s4 .wizard__strength-bar span { background: var(--status-ok); }
+.wizard__strength-label {
+  font-family: var(--font-head);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  min-width: 60px;
+  text-align: right;
+}
