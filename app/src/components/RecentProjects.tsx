@@ -37,7 +37,7 @@ export function RecentProjects({ entries, onOpen, onRemove }: Props) {
   if (sorted.length === 0) {
     return (
       <div className="recents">
-        <h2 className="recents__heading">Recents</h2>
+        <h2 className="recents__title">Recents</h2>
         <p className="recents__empty">No recent vaults — open or create one above.</p>
       </div>
     );
@@ -45,7 +45,7 @@ export function RecentProjects({ entries, onOpen, onRemove }: Props) {
 
   return (
     <div className="recents">
-      <h2 className="recents__heading">Recents</h2>
+      <h2 className="recents__title">Recents</h2>
       <ul className="recents__list">
         {sorted.map((entry) => (
           <li key={entry.id} className="recents__item">

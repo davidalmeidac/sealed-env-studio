@@ -1,18 +1,30 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import QRCode from 'qrcode';
 import type { SealedMode, AppSettings, SealedFileContent } from '../lib/types';
 import { inspectDirectory, readEnvFile, initKeys, sealFile, ensureGitignore } from '../lib/init';
 
-type InitStep = 'folder' | 'mode' | 'source' | 'keys' | 'review';
-const STEPS: InitStep[] = ['folder', 'mode', 'source', 'keys', 'review'];
+type InitStep = 'folder' | 'mode' | 'source' | 'keys' | 'verify' | 'review';
 
-function nextStep(s: InitStep): InitStep {
-  const i = STEPS.indexOf(s);
-  return STEPS[Math.min(i + 1, STEPS.length - 1)];
+/**
+ * Compute the step sequence for the given mode. `verify` only appears
+ * for enterprise (the only mode with a TOTP secret to verify against).
+ * Computed dynamically so the step counter ("step X of N") and the
+ * Next/Back navigation stay correct in all modes.
+ */
+function stepsFor(mode: SealedMode): InitStep[] {
+  return mode === 'enterprise'
+    ? ['folder', 'mode', 'source', 'keys', 'verify', 'review']
+    : ['folder', 'mode', 'source', 'keys', 'review'];
 }
-function prevStep(s: InitStep): InitStep {
-  const i = STEPS.indexOf(s);
-  return STEPS[Math.max(i - 1, 0)];
+
+function nextStepIn(steps: InitStep[], s: InitStep): InitStep {
+  const i = steps.indexOf(s);
+  return steps[Math.min(i + 1, steps.length - 1)] as InitStep;
+}
+function prevStepIn(steps: InitStep[], s: InitStep): InitStep {
+  const i = steps.indexOf(s);
+  return steps[Math.max(i - 1, 0)] as InitStep;
 }
 
 interface WizardData {
@@ -59,11 +71,63 @@ function stripComments(content: string): string {
     .join('\n') + '\n';
 }
 
-function totpUri(secretHex: string): string {
-  // Base32-encode the hex secret for a TOTP URI
+/**
+ * Build an RFC 6238 provisioning URI for the operator's authenticator app.
+ *
+ * Format: `otpauth://totp/<issuer>:<account>?secret=…&issuer=…`
+ *   - issuer  = "sealed-env" (the wire format, not the GUI)
+ *   - account = the project folder basename (so authenticators show
+ *     "sealed-env (myapp)" instead of a generic "sealed-env-studio")
+ *
+ * Path separators in the label MUST be URL-encoded; `encodeURIComponent`
+ * handles spaces, slashes, accents, etc.
+ */
+/** Cross-platform basename — strips both POSIX (/) and Windows (\) seps. */
+function folderBasename(path: string): string {
+  if (!path) return '';
+  const cleaned = path.replace(/[\\/]+$/, '');
+  const idx = Math.max(cleaned.lastIndexOf('/'), cleaned.lastIndexOf('\\'));
+  return idx === -1 ? cleaned : cleaned.slice(idx + 1);
+}
+
+function totpUri(secretHex: string, label: string): string {
   const bytes = hexToBytes(secretHex);
   const base32 = base32Encode(bytes);
-  return `otpauth://totp/sealed-env-studio?secret=${base32}&issuer=sealed-env-studio&algorithm=SHA1&digits=6&period=30`;
+  const safeLabel = encodeURIComponent(label || 'vault');
+  return `otpauth://totp/sealed-env:${safeLabel}?secret=${base32}&issuer=sealed-env&algorithm=SHA1&digits=6&period=30`;
+}
+
+/**
+ * Compute a TOTP code (RFC 6238) for the given secret + timestamp.
+ * Used for local verification — operator scans QR, then types the
+ * 6 digits their authenticator shows; we recompute and compare. The
+ * secret never leaves the renderer process.
+ *
+ * Uses Web Crypto API (`crypto.subtle`) — no dependency, no network.
+ */
+async function generateTotp(secretBytes: Uint8Array, timestampSec: number): Promise<string> {
+  const counter = Math.floor(timestampSec / 30);
+  const counterBuf = new ArrayBuffer(8);
+  const view = new DataView(counterBuf);
+  // Counter is 64-bit big-endian; the high 32 bits stay zero for any
+  // realistic Unix timestamp (good until year ~10889 AD).
+  view.setUint32(4, counter, false);
+
+  const key = await crypto.subtle.importKey(
+    'raw',
+    secretBytes as BufferSource,
+    { name: 'HMAC', hash: 'SHA-1' },
+    false,
+    ['sign'],
+  );
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, counterBuf));
+  const offset = (sig[sig.length - 1] ?? 0) & 0xf;
+  const code =
+    (((sig[offset] ?? 0) & 0x7f) << 24) |
+    ((sig[offset + 1] ?? 0) << 16) |
+    ((sig[offset + 2] ?? 0) << 8) |
+    (sig[offset + 3] ?? 0);
+  return (code % 1_000_000).toString().padStart(6, '0');
 }
 
 function hexToBytes(hex: string): Uint8Array {
@@ -220,12 +284,34 @@ export function InitWizard({ settings, onComplete, onCancel }: Props) {
         await ensureGitignore({ folderPath: data.folderPath });
       }
 
+      // Parse rawContent locally to populate the viewer immediately.
+      // The file on disk DOES contain these variables (sealed by Rust);
+      // we mirror them here so the viewer doesn't show an empty vault
+      // until the operator re-opens. Format matches `parse_dotenv` in
+      // the Rust side: skip blanks + `#` comments, split on first `=`,
+      // strip surrounding double-quotes.
+      const parsed: { key: string; value: string }[] = [];
+      for (const rawLine of data.rawContent.split('\n')) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) continue;
+        const eq = line.indexOf('=');
+        if (eq <= 0) continue;
+        const key = line.slice(0, eq).trim();
+        if (!key) continue;
+        let value = line.slice(eq + 1).trim();
+        // Strip surrounding double-quotes (mirrors dotenv convention)
+        if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+          value = value.slice(1, -1);
+        }
+        parsed.push({ key, value });
+      }
+
       onComplete({
         path: sealResp.absolutePath,
         mode: data.mode,
         kdf: `argon2id (t=${settings.argon2T},m=${settings.argon2M},p=${settings.argon2P})`,
         created: new Date().toISOString(),
-        variables: [],
+        variables: parsed,
       });
     } catch (e) {
       setError(String(e));
@@ -236,20 +322,30 @@ export function InitWizard({ settings, onComplete, onCancel }: Props) {
 
   // ─── Navigation ──────────────────────────────────────────────────────────
 
+  // Dynamic step list — for enterprise, inject 'verify' between keys
+  // and review so the operator must prove they scanned the QR before
+  // sealing.
+  const steps = stepsFor(data.mode);
+
   const canAdvance = (): boolean => {
     switch (step) {
       case 'folder': return data.folderPath.length > 0;
       case 'mode': return true;
       case 'source': return data.rawContent.trim().length > 0;
-      case 'keys': return data.masterKeyHex.length > 0 && data.copiedReminder;
+      case 'keys':
+        // Enterprise: just need keys generated; verify happens next step.
+        // Basic/team: need the "I have copied" checkbox.
+        return data.masterKeyHex.length > 0 &&
+          (data.mode === 'enterprise' || data.copiedReminder);
+      case 'verify': return data.copiedReminder; // verified === true
       case 'review': return true;
     }
   };
 
-  const handleNext = () => setStep((s) => nextStep(s));
-  const handleBack = () => { setError(''); setStep((s) => prevStep(s)); };
+  const handleNext = () => setStep((s) => nextStepIn(steps, s));
+  const handleBack = () => { setError(''); setStep((s) => prevStepIn(steps, s)); };
 
-  const stepIndex = STEPS.indexOf(step) + 1;
+  const stepIndex = steps.indexOf(step) + 1;
 
   return (
     <div className="wizard">
@@ -259,7 +355,7 @@ export function InitWizard({ settings, onComplete, onCancel }: Props) {
           <span className="yellow" />
           <span className="green" />
         </div>
-        <div className="titlebar__title">New vault — step {stepIndex} of {STEPS.length}</div>
+        <div className="titlebar__title">New vault — step {stepIndex} of {steps.length}</div>
         <div style={{ width: 60 }} />
       </div>
 
@@ -298,6 +394,7 @@ export function InitWizard({ settings, onComplete, onCancel }: Props) {
         {step === 'keys' && (
           <StepKeys
             mode={data.mode}
+            folderName={folderBasename(data.folderPath)}
             masterKeyHex={data.masterKeyHex}
             signingKeyHex={data.signingKeyHex}
             totpSecretHex={data.totpSecretHex}
@@ -305,6 +402,14 @@ export function InitWizard({ settings, onComplete, onCancel }: Props) {
             onGenerate={() => { void handleGenerateKeys(); }}
             onCopiedReminderChange={(v) => update({ copiedReminder: v })}
             busy={busy}
+          />
+        )}
+
+        {step === 'verify' && (
+          <StepVerify
+            secretHex={data.totpSecretHex}
+            verified={data.copiedReminder}
+            onVerified={() => update({ copiedReminder: true })}
           />
         )}
 
@@ -511,6 +616,7 @@ function StepSource({
 
 function StepKeys({
   mode,
+  folderName,
   masterKeyHex,
   signingKeyHex,
   totpSecretHex,
@@ -520,6 +626,7 @@ function StepKeys({
   busy,
 }: {
   mode: SealedMode;
+  folderName: string;
   masterKeyHex: string;
   signingKeyHex: string;
   totpSecretHex: string;
@@ -555,22 +662,158 @@ function StepKeys({
           {mode === 'enterprise' && totpSecretHex && (
             <>
               <KeyField label="TOTP secret (hex)" value={totpSecretHex} />
-              <div className="wizard__totp-uri">
-                <span className="wizard__totp-uri-label">TOTP provisioning URI:</span>
-                <code className="wizard__totp-uri-value">{totpUri(totpSecretHex)}</code>
-              </div>
+              <TotpProvisioning uri={totpUri(totpSecretHex, folderName)} />
+              <p className="wizard__step-desc" style={{ marginTop: 0 }}>
+                Scan the QR with your authenticator. On the next step you'll
+                enter the 6-digit code to verify the secret reached your
+                device intact.
+              </p>
             </>
           )}
 
-          <label className="wizard__copy-reminder">
-            <input
-              type="checkbox"
-              checked={copiedReminder}
-              onChange={(e) => onCopiedReminderChange(e.target.checked)}
-            />
-            <strong>I have copied all keys to a secure location.</strong>
-          </label>
+          {mode !== 'enterprise' && (
+            <label className="wizard__copy-reminder">
+              <input
+                type="checkbox"
+                checked={copiedReminder}
+                onChange={(e) => onCopiedReminderChange(e.target.checked)}
+              />
+              <strong>I have copied all keys to a secure location.</strong>
+            </label>
+          )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Step 5 (enterprise only): TOTP verification gate as its own wizard
+ * step. Renders the title/intro plus the `<TotpVerification>` widget.
+ * The operator can't reach Review until they prove the secret was
+ * scanned correctly.
+ */
+function StepVerify({
+  secretHex,
+  verified,
+  onVerified,
+}: {
+  secretHex: string;
+  verified: boolean;
+  onVerified: () => void;
+}) {
+  return (
+    <div className="wizard__step">
+      <h2 className="wizard__step-title">5. Verify TOTP</h2>
+      <p className="wizard__step-desc">
+        Open your authenticator app and enter the current 6-digit code for
+        this vault. Verifying here confirms the secret reached your device
+        intact and that your clock matches ours within the ±30s tolerance.
+      </p>
+      <TotpVerification
+        secretHex={secretHex}
+        verified={verified}
+        onVerified={onVerified}
+      />
+    </div>
+  );
+}
+
+/**
+ * TOTP verification gate (enterprise only). The operator scans the QR
+ * with their authenticator, then types the current 6-digit code here.
+ * We recompute the TOTP locally (Web Crypto API, no network) and
+ * compare. On match, the wizard's `copiedReminder` flag flips to
+ * true and Next becomes enabled.
+ *
+ * This is the right gate for enterprise mode because:
+ *   - It proves the secret was actually provisioned to the operator's
+ *     authenticator (a plain checkbox can be lied to).
+ *   - It exercises the exact code path that production deploys will
+ *     use, surfacing any clock skew issues NOW instead of at runtime.
+ *
+ * We accept ±1 step skew (90s window total) per RFC 6238 §5.2.
+ */
+function TotpVerification({
+  secretHex,
+  verified,
+  onVerified,
+}: {
+  secretHex: string;
+  verified: boolean;
+  onVerified: () => void;
+}) {
+  const [code, setCode] = useState('');
+  const [status, setStatus] = useState<'idle' | 'checking' | 'wrong'>('idle');
+
+  // Re-check whenever the user finishes typing 6 digits (debounce on length).
+  useEffect(() => {
+    if (verified) return;
+    const trimmed = code.replace(/\D/g, '').slice(0, 6);
+    if (trimmed.length !== 6) {
+      setStatus('idle');
+      return;
+    }
+    let cancelled = false;
+    setStatus('checking');
+    void (async () => {
+      const secretBytes = hexToBytes(secretHex);
+      const now = Math.floor(Date.now() / 1000);
+      const candidates = await Promise.all([
+        generateTotp(secretBytes, now - 30),
+        generateTotp(secretBytes, now),
+        generateTotp(secretBytes, now + 30),
+      ]);
+      if (cancelled) return;
+      if (candidates.includes(trimmed)) {
+        onVerified();
+      } else {
+        setStatus('wrong');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [code, secretHex, verified, onVerified]);
+
+  if (verified) {
+    return (
+      <div className="wizard__totp-verify wizard__totp-verify--ok">
+        <span className="wizard__totp-verify-mark">✓</span>
+        <div>
+          <strong>Authenticator verified.</strong>
+          <p className="wizard__totp-verify-hint">
+            The code you entered matches what we expect. You can proceed.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="wizard__totp-verify">
+      <label className="wizard__totp-verify-label" htmlFor="totp-code">
+        Enter the 6-digit code from your authenticator
+      </label>
+      <input
+        id="totp-code"
+        className={`wizard__totp-verify-input${status === 'wrong' ? ' wizard__totp-verify-input--error' : ''}`}
+        type="text"
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        placeholder="123 456"
+        value={code}
+        onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+        maxLength={6}
+      />
+      {status === 'wrong' && (
+        <span className="field-error">
+          Code doesn't match. Wait for the next 30s window and try again, or
+          re-scan the QR if your authenticator wasn't set up yet.
+        </span>
+      )}
+      {status === 'checking' && (
+        <span className="wizard__totp-verify-hint">Checking…</span>
       )}
     </div>
   );
@@ -594,6 +837,83 @@ function KeyField({ label, value }: { label: string; value: string }) {
         <button className="btn btn--ghost btn--small" onClick={handleCopy}>
           {copied ? 'Copied!' : 'Copy'}
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * TOTP provisioning block — renders the URI as text plus a locally
+ * generated QR code so the operator can scan it from their phone
+ * (Authy, Google Authenticator, etc.) without sending the secret to
+ * any third-party API. QR rendering uses the `qrcode` npm package
+ * (pure JS, MIT) — no network call, no telemetry.
+ */
+function TotpProvisioning({ uri }: { uri: string }) {
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  const [showUri, setShowUri] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void QRCode.toDataURL(uri, {
+      width: 220,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#1a1612', light: '#f1ebe0' },
+    }).then((d) => {
+      if (!cancelled) setQrDataUrl(d);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [uri]);
+
+  const handleCopy = () => {
+    void navigator.clipboard.writeText(uri).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div className="wizard__totp-block">
+      <div className="wizard__totp-qr-wrap">
+        {qrDataUrl ? (
+          <img
+            className="wizard__totp-qr"
+            src={qrDataUrl}
+            alt="Scan to provision TOTP in your authenticator app"
+          />
+        ) : (
+          <div className="wizard__totp-qr-placeholder">…</div>
+        )}
+      </div>
+      <div className="wizard__totp-meta">
+        <span className="wizard__totp-uri-label">Scan with your authenticator</span>
+        <p className="wizard__totp-help">
+          Scan this QR with Authy, Google Authenticator, 1Password or any
+          RFC 6238 app. Or use the URI manually below.
+        </p>
+        <div className="wizard__totp-actions">
+          <button
+            type="button"
+            className="btn btn--ghost btn--small"
+            onClick={() => setShowUri((v) => !v)}
+          >
+            {showUri ? 'Hide URI' : 'Show URI'}
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--small"
+            onClick={handleCopy}
+          >
+            {copied ? 'Copied!' : 'Copy URI'}
+          </button>
+        </div>
+        {showUri && (
+          <code className="wizard__totp-uri-value">{uri}</code>
+        )}
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import { useReducer, useEffect, useState, useMemo } from 'react';
 import type { AppSettings, RecentEntry, SealedFileContent, SealedMode } from './lib/types';
 import { getSettings, saveSettings, getRecents, pushRecent, removeRecent, clearRecents, openSealedFile } from './lib/workspace';
+import { Titlebar } from './components/Titlebar';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { InitWizard } from './components/InitWizard';
 import { SettingsModal } from './components/SettingsModal';
@@ -195,7 +196,9 @@ export function App() {
   }, [state]);
 
   return (
-    <>
+    <div className="app-shell">
+      <Titlebar />
+
       {/* Settings modal overlays any state */}
       {state.kind === 'settings' && (
         <SettingsModal
@@ -245,29 +248,16 @@ export function App() {
       )}
 
       {state.kind === 'open' && (
-        <div className="app-shell">
-          {/* macOS-style titlebar */}
-          <div className="titlebar">
-            <div className="traffic-lights">
-              <span className="red" />
-              <span className="yellow" />
-              <span className="green" />
-            </div>
-            <div className="titlebar__title">sealed-env Studio</div>
-            <div style={{ width: 60 }} />
-          </div>
-
-          {/* File path + mode pill */}
+        <>
           <div className="topbar">
             <div className="topbar__path">
-              <span className="icon">📁</span>
+              <span className="icon">&#128193;</span>
               <span>{dirname(state.file.path)}</span>
               <span className="filename">{basename(state.file.path)}</span>
             </div>
             <ModeBadge mode={state.file.mode} />
           </div>
 
-          {/* Toolbar */}
           <div className="toolbar">
             <div className="search">
               <input
@@ -288,17 +278,15 @@ export function App() {
               title="Settings"
               onClick={() => dispatch({ type: 'OPEN_SETTINGS' })}
             >
-              ⚙
+              &#9881;
             </button>
           </div>
 
-          {/* Main area */}
           <div className="main">
             <VariableViewer file={state.file} filterText={filterText} />
             <HealthSidebar checks={DEFAULT_HEALTH} />
           </div>
 
-          {/* Footer */}
           <div className="footer">
             <span>
               {state.file.variables.length} variables · sealed{' '}
@@ -306,9 +294,9 @@ export function App() {
             </span>
             <span className="stat">v0.2.0-pre.1</span>
           </div>
-        </div>
+        </>
       )}
-    </>
+    </div>
   );
 }
 
