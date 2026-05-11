@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import type { SealedMode, DecryptVaultResponse } from '../lib/types';
 import { decryptVault, mintUnsealToken } from '../lib/workspace';
 import { readLocalEnv } from '../lib/init';
-import { parseSecret, verifyTotp, bytesToHex } from '../lib/totp';
+import { hasVaultCredentials, loadVaultCredentials } from '../lib/credstore';
+import { parseSecret, verifyTotp, hexToBytes, bytesToHex } from '../lib/totp';
 
 /**
  * Normalize whatever the operator typed (hex or base32) into the hex
@@ -27,6 +28,7 @@ interface FieldErrors {
   signingKey?: string;
   totpSecret?: string;
   authCode?: string;
+  passphrase?: string;
   unsealToken?: string;
   mint?: string;
   generic?: string;
@@ -35,19 +37,27 @@ interface FieldErrors {
 type Autoloaded = Set<'master' | 'signing' | 'totp' | 'token'>;
 
 export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: Props) {
+  // ─── Raw-keys mode state ──────────────────────────────────────────────────
   const [masterKey, setMasterKey] = useState('');
   const [signingKey, setSigningKey] = useState('');
   const [totpSecret, setTotpSecret] = useState('');
-  const [authCode, setAuthCode] = useState('');
   const [unsealToken, setUnsealToken] = useState('');
   const [showAdvancedToken, setShowAdvancedToken] = useState(false);
   const [showTotpSecretField, setShowTotpSecretField] = useState(false);
   const [mintedToken, setMintedToken] = useState<string | null>(null);
   const [mintedExp, setMintedExp] = useState<number | null>(null);
+  const [autoloaded, setAutoloaded] = useState<Autoloaded>(() => new Set());
+
+  // ─── Stored-creds (Tier A) mode state ─────────────────────────────────────
+  const [credsAvailable, setCredsAvailable] = useState(false);
+  const [useStoredCreds, setUseStoredCreds] = useState(false);
+  const [passphrase, setPassphrase] = useState('');
+
+  // ─── Shared state ─────────────────────────────────────────────────────────
+  const [authCode, setAuthCode] = useState('');
   const [errors, setErrors] = useState<FieldErrors>({});
   const [busy, setBusy] = useState(false);
   const [minting, setMinting] = useState(false);
-  const [autoloaded, setAutoloaded] = useState<Autoloaded>(() => new Set());
 
   const needsSigning = mode === 'team' || mode === 'enterprise';
   const needsTotp = mode === 'enterprise';
@@ -59,8 +69,22 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
     return idx === -1 ? '' : norm.slice(0, idx);
   })();
 
-  // Auto-load credentials from <folder>/.env.local on mount.
-  // TOTP secret is loaded silently (not shown in UI — operator types the 6-digit code instead).
+  // Probe the OS keychain on mount. If creds exist, default to passphrase mode.
+  useEffect(() => {
+    let cancelled = false;
+    void hasVaultCredentials({ absolutePath: path })
+      .then((has) => {
+        if (cancelled) return;
+        setCredsAvailable(has);
+        if (has) setUseStoredCreds(true);
+      })
+      .catch(() => {
+        // Keystore probe failure is non-fatal — fall through to raw mode.
+      });
+    return () => { cancelled = true; };
+  }, [path]);
+
+  // Opportunistic .env.local autoload (only used by raw-keys mode).
   useEffect(() => {
     if (!folderPath) return;
     let cancelled = false;
@@ -76,9 +100,7 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
         loaded.add('token');
       }
       if (loaded.size > 0) setAutoloaded(loaded);
-    }).catch(() => {
-      // Silent: .env.local autoload is opportunistic, never blocks unlock.
-    });
+    }).catch(() => { /* opportunistic */ });
     return () => { cancelled = true; };
   }, [folderPath]);
 
@@ -90,8 +112,98 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
     });
   };
 
-  /** Verify the 6-digit authenticator code against the stored TOTP secret (±1 step skew). */
-  const verifyAuthCode = async (): Promise<boolean> => {
+  const switchToRawMode = () => {
+    setUseStoredCreds(false);
+    setPassphrase('');
+    setErrors({});
+  };
+
+  const switchToStoredMode = () => {
+    setUseStoredCreds(true);
+    setMasterKey('');
+    setSigningKey('');
+    setTotpSecret('');
+    setUnsealToken('');
+    setShowAdvancedToken(false);
+    setShowTotpSecretField(false);
+    setAutoloaded(new Set());
+    setErrors({});
+  };
+
+  /** Verify the 6-digit authenticator code against an arbitrary TOTP secret. */
+  const verifyAuthCodeAgainst = async (totpSecretHex: string): Promise<boolean> => {
+    const ok = await verifyTotp(hexToBytes(totpSecretHex), authCode);
+    if (!ok) {
+      setErrors((prev) => ({
+        ...prev,
+        authCode: "Code doesn't match. Wait for the next 30-second window.",
+      }));
+    }
+    return ok;
+  };
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // Stored-creds unlock flow (Tier A)
+  // ═════════════════════════════════════════════════════════════════════════
+
+  const handleUnlockFromKeystore = async () => {
+    const e: FieldErrors = {};
+    if (!passphrase) e.passphrase = 'Passphrase is required';
+    if (needsTotp) {
+      if (!authCode.trim()) e.authCode = '6-digit code is required';
+      else if (!/^\d{6}$/.test(authCode.trim())) e.authCode = 'Must be 6 digits';
+    }
+    if (Object.keys(e).length > 0) {
+      setErrors(e);
+      return;
+    }
+
+    setBusy(true);
+    setErrors({});
+
+    try {
+      const creds = await loadVaultCredentials({ absolutePath: path, passphrase });
+
+      // Enterprise: verify the live 6-digit code against the unwrapped TOTP secret.
+      if (needsTotp) {
+        if (!creds.totp) {
+          setErrors({
+            generic: 'Stored credentials are missing the TOTP secret. Re-save with all keys.',
+          });
+          setBusy(false);
+          return;
+        }
+        const ok = await verifyAuthCodeAgainst(creds.totp);
+        if (!ok) {
+          setBusy(false);
+          return;
+        }
+      }
+
+      const result = await decryptVault({
+        rawContent,
+        masterKeyHex: creds.master,
+        ...(creds.signing ? { signingKeyHex: creds.signing } : {}),
+        ...(creds.totp ? { totpSecretHex: creds.totp } : {}),
+      });
+      onUnlocked(result);
+    } catch {
+      // The Rust side collapses bad passphrase / tampered blob / wrong vault_id
+      // into DecryptFailed; we surface a single message to avoid leaking which case.
+      setErrors({
+        generic: 'Could not unlock with that passphrase. Try again or use raw keys.',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // Raw-keys unlock flow (existing — bootstrap, recovery, CLI interop)
+  // ═════════════════════════════════════════════════════════════════════════
+
+  /** Verify the 6-digit authenticator code against the typed TOTP secret. */
+  const verifyAuthCodeFromTyped = async (): Promise<boolean> => {
     const secretBytes = parseSecret(totpSecret);
     if (!secretBytes) {
       setErrors((prev) => ({
@@ -110,7 +222,7 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
     return ok;
   };
 
-  const handleUnlock = async () => {
+  const handleUnlockFromRaw = async () => {
     const e: FieldErrors = {};
     if (!masterKey.trim()) e.masterKey = 'Master key is required';
     if (needsSigning && !signingKey.trim()) e.signingKey = 'Signing key is required';
@@ -119,14 +231,9 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
       if (showAdvancedToken) {
         if (!unsealToken.trim()) e.unsealToken = 'Unseal token is required';
       } else if (autoloaded.has('totp') && !showTotpSecretField) {
-        // Stored-secret path: operator only needs to prove authenticator presence.
         if (!authCode.trim()) e.authCode = '6-digit code is required';
         else if (!/^\d{6}$/.test(authCode.trim())) e.authCode = 'Must be 6 digits';
       } else {
-        // Bootstrap / recovery path: operator pastes the secret itself.
-        // No 6-digit needed — the secret alone is both proof and minting material.
-        // Accepts hex (40 chars) OR base32 (32 chars), the format every
-        // authenticator app shows under "manual entry".
         if (!totpSecret.trim()) {
           e.totpSecret = 'TOTP secret is required';
         } else if (parseSecret(totpSecret) === null) {
@@ -145,14 +252,10 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
     setErrors({});
 
     try {
-      // 2FA proof: verify the 6-digit code only when we used that path
-      // (stored-secret unlock). Bootstrap/recovery path skips verify
-      // because the operator just typed the secret — they already
-      // proved possession.
       const usingStoredSecret =
         needsTotp && !showAdvancedToken && autoloaded.has('totp') && !showTotpSecretField;
       if (usingStoredSecret) {
-        const ok = await verifyAuthCode();
+        const ok = await verifyAuthCodeFromTyped();
         if (!ok) {
           setBusy(false);
           return;
@@ -193,8 +296,7 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
       return;
     }
 
-    // Verify the 6-digit code before minting (same gate as unlock).
-    const ok = await verifyAuthCode();
+    const ok = await verifyAuthCodeFromTyped();
     if (!ok) return;
 
     setMinting(true);
@@ -227,16 +329,14 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
 
   const copyToken = async () => {
     if (!mintedToken) return;
-    try {
-      await navigator.clipboard.writeText(mintedToken);
-    } catch {
-      // Clipboard may be unavailable in some environments; ignore silently.
-    }
+    try { await navigator.clipboard.writeText(mintedToken); } catch { /* ignore */ }
   };
 
   const expSecondsRemaining = mintedExp
     ? Math.max(0, mintedExp - Math.floor(Date.now() / 1000))
     : 0;
+
+  const handleSubmit = useStoredCreds ? handleUnlockFromKeystore : handleUnlockFromRaw;
 
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Unlock vault">
@@ -266,82 +366,32 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
             <div className="field-error field-error--banner">{errors.generic}</div>
           )}
 
-          {autoloaded.size > 0 && (
-            <p className="unlock-dialog__autoload-note">
-              Found legacy <code>.env.local</code>. Verify these match your vault.{' '}
-              <button
-                type="button"
-                className="unlock-dialog__autoload-clear"
-                onClick={() => {
-                  if (autoloaded.has('master')) setMasterKey('');
-                  if (autoloaded.has('signing')) setSigningKey('');
-                  if (autoloaded.has('totp')) setTotpSecret('');
-                  if (autoloaded.has('token')) {
-                    setUnsealToken('');
-                    setShowAdvancedToken(false);
-                  }
-                  setAutoloaded(new Set());
-                }}
-              >
-                Clear and paste manually
-              </button>
-            </p>
-          )}
-
-          <label className="settings-group__field">
-            <span>
-              Master key (hex)            </span>
-            <input
-              type="password"
-              placeholder="64 hex characters"
-              value={masterKey}
-              onChange={(e) => { setMasterKey(e.target.value); clearFieldError('masterKey'); }}
-              autoFocus={!autoloaded.has('master')}
-              disabled={busy}
-              className={errors.masterKey ? 'input--error' : ''}
-            />
-            {errors.masterKey && (
-              <span className="field-error">{errors.masterKey}</span>
-            )}
-          </label>
-
-          {needsSigning && (
-            <label className="settings-group__field">
-              <span>Signing key (hex)</span>
-              <input
-                type="password"
-                placeholder="64 hex characters"
-                value={signingKey}
-                onChange={(e) => { setSigningKey(e.target.value); clearFieldError('signingKey'); }}
-                disabled={busy}
-                className={errors.signingKey ? 'input--error' : ''}
-              />
-              {errors.signingKey && (
-                <span className="field-error">{errors.signingKey}</span>
-              )}
-            </label>
-          )}
-
-          {needsTotp && !showAdvancedToken && (
+          {useStoredCreds ? (
+            /* ═════════════════════════════════════════════════════════
+               TIER A — Passphrase unlock from OS keychain
+               ═════════════════════════════════════════════════════════ */
             <>
-              {/*
-                Two mutually-exclusive paths:
+              <p className="unlock-dialog__autoload-note">
+                Saved in system credential manager. Enter your passphrase to unlock.
+              </p>
 
-                 (A) Stored-secret path — `.env.local` has the TOTP
-                     secret. The operator just types the 6-digit code
-                     from their authenticator. The secret stays on disk;
-                     the code is live proof of authenticator possession.
+              <label className="settings-group__field">
+                <span>Passphrase</span>
+                <input
+                  type="password"
+                  placeholder="Your vault passphrase"
+                  value={passphrase}
+                  onChange={(e) => { setPassphrase(e.target.value); clearFieldError('passphrase'); }}
+                  autoFocus
+                  disabled={busy}
+                  className={errors.passphrase ? 'input--error' : ''}
+                />
+                {errors.passphrase && (
+                  <span className="field-error">{errors.passphrase}</span>
+                )}
+              </label>
 
-                 (B) Bootstrap / recovery path — no stored secret (first
-                     unlock from this machine, or operator clicked
-                     "Replace stored secret"). The operator pastes the
-                     40-hex secret from their backup. NO 6-digit code is
-                     required — typing the secret IS the proof, and we
-                     have everything needed to mint the token.
-              */}
-
-              {autoloaded.has('totp') && !showTotpSecretField ? (
-                /* ── Path A: stored-secret, ask for 6-digit only ─── */
+              {needsTotp && (
                 <label className="settings-group__field">
                   <span>Authenticator code (6 digits)</span>
                   <input
@@ -356,7 +406,6 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
                       setAuthCode(e.target.value.replace(/\s/g, ''));
                       clearFieldError('authCode');
                     }}
-                    autoFocus={autoloaded.has('master')}
                     disabled={busy}
                     className={`unlock-dialog__otp-input${errors.authCode ? ' input--error' : ''}`}
                   />
@@ -367,133 +416,241 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
                     Open your authenticator and enter the current code.
                   </span>
                 </label>
-              ) : (
-                /* ── Path B: bootstrap, ask for TOTP secret only ─── */
-                <label className="settings-group__field">
-                  <span>TOTP secret</span>
-                  <input
-                    type="password"
-                    placeholder="hex (40 chars) or base32 (32 chars)"
-                    value={totpSecret}
-                    onChange={(e) => { setTotpSecret(e.target.value); clearFieldError('totpSecret'); }}
-                    autoFocus
-                    disabled={busy}
-                    className={errors.totpSecret ? 'input--error' : ''}
-                  />
-                  {errors.totpSecret && (
-                    <span className="field-error">{errors.totpSecret}</span>
-                  )}
-                  <span className="unlock-dialog__hint">
-                    First-time unlock. Paste the secret from your backup or
-                    authenticator. Studio stores it locally so future unlocks
-                    only need the 6-digit code.
-                  </span>
-                </label>
-              )}
-
-              {/* Allow operator to swap stored secret if they need to
-                  rotate or recover from a phone change. */}
-              {autoloaded.has('totp') && !showTotpSecretField && (
-                <button
-                  type="button"
-                  className="unlock-dialog__advanced-toggle"
-                  onClick={() => setShowTotpSecretField(true)}
-                >
-                  Replace stored TOTP secret
-                </button>
               )}
 
               <button
                 type="button"
                 className="unlock-dialog__advanced-toggle"
-                onClick={() => {
-                  setShowAdvancedToken(true);
-                  setAuthCode('');
-                  setTotpSecret('');
-                  clearFieldError('authCode');
-                  clearFieldError('totpSecret');
-                }}
+                onClick={switchToRawMode}
               >
-                Use a pre-built unseal token
+                Forgot passphrase? Use raw keys instead →
               </button>
             </>
-          )}
-
-          {needsTotp && showAdvancedToken && (
+          ) : (
+            /* ═════════════════════════════════════════════════════════
+               RAW KEYS — Bootstrap / recovery / CLI interop
+               ═════════════════════════════════════════════════════════ */
             <>
+              {credsAvailable && (
+                <p className="unlock-dialog__autoload-note">
+                  Credentials exist in the system credential manager.{' '}
+                  <button
+                    type="button"
+                    className="unlock-dialog__autoload-clear"
+                    onClick={switchToStoredMode}
+                  >
+                    Use the passphrase instead
+                  </button>
+                </p>
+              )}
+
+              {autoloaded.size > 0 && (
+                <p className="unlock-dialog__autoload-note">
+                  Found legacy <code>.env.local</code>. Verify these match your vault.{' '}
+                  <button
+                    type="button"
+                    className="unlock-dialog__autoload-clear"
+                    onClick={() => {
+                      if (autoloaded.has('master')) setMasterKey('');
+                      if (autoloaded.has('signing')) setSigningKey('');
+                      if (autoloaded.has('totp')) setTotpSecret('');
+                      if (autoloaded.has('token')) {
+                        setUnsealToken('');
+                        setShowAdvancedToken(false);
+                      }
+                      setAutoloaded(new Set());
+                    }}
+                  >
+                    Clear and paste manually
+                  </button>
+                </p>
+              )}
+
               <label className="settings-group__field">
-                <span>
-                  Unseal token
-                </span>
+                <span>Master key (hex)</span>
                 <input
-                  type="text"
-                  placeholder="usl_…"
-                  value={unsealToken}
-                  onChange={(e) => { setUnsealToken(e.target.value); clearFieldError('unsealToken'); }}
+                  type="password"
+                  placeholder="64 hex characters"
+                  value={masterKey}
+                  onChange={(e) => { setMasterKey(e.target.value); clearFieldError('masterKey'); }}
+                  autoFocus={!autoloaded.has('master')}
                   disabled={busy}
-                  className={errors.unsealToken ? 'input--error' : ''}
+                  className={errors.masterKey ? 'input--error' : ''}
                 />
-                {errors.unsealToken && (
-                  <span className="field-error">{errors.unsealToken}</span>
+                {errors.masterKey && (
+                  <span className="field-error">{errors.masterKey}</span>
                 )}
               </label>
 
-              <button
-                type="button"
-                className="unlock-dialog__advanced-toggle"
-                onClick={() => {
-                  setShowAdvancedToken(false);
-                  setUnsealToken('');
-                  clearFieldError('unsealToken');
-                }}
-              >
-                ← Use a 6-digit authenticator code instead
-              </button>
-            </>
-          )}
-
-          {needsTotp && !showAdvancedToken && (
-            <div className="unlock-dialog__mint">
-              <button
-                type="button"
-                className="btn btn--ghost btn--small"
-                onClick={() => { void handleMintToken(); }}
-                disabled={minting || busy}
-              >
-                {minting ? 'Minting…' : 'Generate unseal token (for sharing)'}
-              </button>
-
-              {errors.mint && (
-                <span className="field-error">{errors.mint}</span>
+              {needsSigning && (
+                <label className="settings-group__field">
+                  <span>Signing key (hex)</span>
+                  <input
+                    type="password"
+                    placeholder="64 hex characters"
+                    value={signingKey}
+                    onChange={(e) => { setSigningKey(e.target.value); clearFieldError('signingKey'); }}
+                    disabled={busy}
+                    className={errors.signingKey ? 'input--error' : ''}
+                  />
+                  {errors.signingKey && (
+                    <span className="field-error">{errors.signingKey}</span>
+                  )}
+                </label>
               )}
 
-              {mintedToken && (
-                <div className="unlock-dialog__minted">
-                  <div className="unlock-dialog__minted-header">
-                    <span className="unlock-dialog__minted-label">
-                      Token minted · expires in {expSecondsRemaining}s
-                    </span>
+              {needsTotp && !showAdvancedToken && (
+                <>
+                  {autoloaded.has('totp') && !showTotpSecretField ? (
+                    <label className="settings-group__field">
+                      <span>Authenticator code (6 digits)</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]{6}"
+                        maxLength={6}
+                        autoComplete="one-time-code"
+                        placeholder="••••••"
+                        value={authCode}
+                        onChange={(e) => {
+                          setAuthCode(e.target.value.replace(/\s/g, ''));
+                          clearFieldError('authCode');
+                        }}
+                        autoFocus={autoloaded.has('master')}
+                        disabled={busy}
+                        className={`unlock-dialog__otp-input${errors.authCode ? ' input--error' : ''}`}
+                      />
+                      {errors.authCode && (
+                        <span className="field-error">{errors.authCode}</span>
+                      )}
+                      <span className="unlock-dialog__hint">
+                        Open your authenticator and enter the current code.
+                      </span>
+                    </label>
+                  ) : (
+                    <label className="settings-group__field">
+                      <span>TOTP secret</span>
+                      <input
+                        type="password"
+                        placeholder="hex (40 chars) or base32 (32 chars)"
+                        value={totpSecret}
+                        onChange={(e) => { setTotpSecret(e.target.value); clearFieldError('totpSecret'); }}
+                        autoFocus
+                        disabled={busy}
+                        className={errors.totpSecret ? 'input--error' : ''}
+                      />
+                      {errors.totpSecret && (
+                        <span className="field-error">{errors.totpSecret}</span>
+                      )}
+                      <span className="unlock-dialog__hint">
+                        First-time unlock. Paste the secret from your backup or
+                        authenticator. Studio stores it locally so future unlocks
+                        only need the 6-digit code.
+                      </span>
+                    </label>
+                  )}
+
+                  {autoloaded.has('totp') && !showTotpSecretField && (
                     <button
                       type="button"
-                      className="btn btn--ghost btn--small"
-                      onClick={() => { void copyToken(); }}
+                      className="unlock-dialog__advanced-toggle"
+                      onClick={() => setShowTotpSecretField(true)}
                     >
-                      Copy
+                      Replace stored TOTP secret
                     </button>
-                  </div>
-                  <textarea
-                    className="unlock-dialog__minted-text"
-                    value={mintedToken}
-                    readOnly
-                    rows={3}
-                  />
-                  <p className="unlock-dialog__minted-hint">
-                    Paste this into a CI/CD form or share with a remote operator.
-                    The token is single-use and expires in 60 seconds.
-                  </p>
+                  )}
+
+                  <button
+                    type="button"
+                    className="unlock-dialog__advanced-toggle"
+                    onClick={() => {
+                      setShowAdvancedToken(true);
+                      setAuthCode('');
+                      setTotpSecret('');
+                      clearFieldError('authCode');
+                      clearFieldError('totpSecret');
+                    }}
+                  >
+                    Use a pre-built unseal token
+                  </button>
+                </>
+              )}
+
+              {needsTotp && showAdvancedToken && (
+                <>
+                  <label className="settings-group__field">
+                    <span>Unseal token</span>
+                    <input
+                      type="text"
+                      placeholder="usl_…"
+                      value={unsealToken}
+                      onChange={(e) => { setUnsealToken(e.target.value); clearFieldError('unsealToken'); }}
+                      disabled={busy}
+                      className={errors.unsealToken ? 'input--error' : ''}
+                    />
+                    {errors.unsealToken && (
+                      <span className="field-error">{errors.unsealToken}</span>
+                    )}
+                  </label>
+
+                  <button
+                    type="button"
+                    className="unlock-dialog__advanced-toggle"
+                    onClick={() => {
+                      setShowAdvancedToken(false);
+                      setUnsealToken('');
+                      clearFieldError('unsealToken');
+                    }}
+                  >
+                    ← Use a 6-digit authenticator code instead
+                  </button>
+                </>
+              )}
+
+              {needsTotp && !showAdvancedToken && (
+                <div className="unlock-dialog__mint">
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--small"
+                    onClick={() => { void handleMintToken(); }}
+                    disabled={minting || busy}
+                  >
+                    {minting ? 'Minting…' : 'Generate unseal token (for sharing)'}
+                  </button>
+
+                  {errors.mint && (
+                    <span className="field-error">{errors.mint}</span>
+                  )}
+
+                  {mintedToken && (
+                    <div className="unlock-dialog__minted">
+                      <div className="unlock-dialog__minted-header">
+                        <span className="unlock-dialog__minted-label">
+                          Token minted · expires in {expSecondsRemaining}s
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn--ghost btn--small"
+                          onClick={() => { void copyToken(); }}
+                        >
+                          Copy
+                        </button>
+                      </div>
+                      <textarea
+                        className="unlock-dialog__minted-text"
+                        value={mintedToken}
+                        readOnly
+                        rows={3}
+                      />
+                      <p className="unlock-dialog__minted-hint">
+                        Paste this into a CI/CD form or share with a remote operator.
+                        The token is single-use and expires in 60 seconds.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
+            </>
           )}
         </div>
 
@@ -503,7 +660,7 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
           </button>
           <button
             className="btn btn--primary"
-            onClick={() => { void handleUnlock(); }}
+            onClick={() => { void handleSubmit(); }}
             disabled={busy}
           >
             {busy ? 'Unlocking…' : 'Unlock'}
