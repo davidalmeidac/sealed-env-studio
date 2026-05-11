@@ -17,6 +17,8 @@ import type {
   SealFileResponse,
   EnsureGitignoreRequest,
   EnsureGitignoreResponse,
+  ReadLocalEnvRequest,
+  ReadLocalEnvResponse,
 } from './types';
 
 export async function initKeys(req: InitKeysRequest): Promise<InitKeysResponse> {
@@ -43,4 +45,10 @@ export async function ensureGitignore(
   req: EnsureGitignoreRequest,
 ): Promise<EnsureGitignoreResponse> {
   return invoke<EnsureGitignoreResponse>('ensure_gitignore', { req });
+}
+
+export async function readLocalEnv(
+  req: ReadLocalEnvRequest,
+): Promise<ReadLocalEnvResponse> {
+  return invoke<ReadLocalEnvResponse>('read_local_env', { req });
 }

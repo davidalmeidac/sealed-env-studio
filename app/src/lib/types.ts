@@ -96,7 +96,10 @@ export interface DecryptVaultRequest {
   rawContent: string;
   masterKeyHex: string;
   signingKeyHex?: string;
+  /** Pre-built `usl_...` token from the CLI. Takes precedence when both fields are present. */
   unsealToken?: string;
+  /** Raw TOTP secret hex (40 chars). When provided without an `unsealToken`, Studio mints the token internally. */
+  totpSecretHex?: string;
 }
 
 export interface ParsedVariable {
@@ -108,6 +111,39 @@ export interface DecryptVaultResponse {
   variables: ParsedVariable[];
   kdf: string;
   created: string;
+}
+
+// ─── mint_unseal_token ────────────────────────────────────────────────────────
+// Builds an enterprise unseal token without decrypting. Same wire format as `sealed-env unseal`.
+
+export interface MintUnsealTokenRequest {
+  rawContent: string;
+  masterKeyHex: string;
+  totpSecretHex: string;
+  deployId?: string;
+  /** Capped to [5, 600]. Default 60. */
+  ttlSeconds?: number;
+}
+
+export interface MintUnsealTokenResponse {
+  unsealToken: string;
+  ttlSeconds: number;
+  expUnix: number;
+}
+
+// ─── read_local_env ───────────────────────────────────────────────────────────
+// Opportunistically reads `<folder>/.env.local` and returns SEALED_ENV_* credentials.
+
+export interface ReadLocalEnvRequest {
+  folderPath: string;
+}
+
+export interface ReadLocalEnvResponse {
+  found: boolean;
+  masterKeyHex?: string;
+  signingKeyHex?: string;
+  totpSecretHex?: string;
+  unsealToken?: string;
 }
 
 // ─── workspace: recents ──────────────────────────────────────────────────────

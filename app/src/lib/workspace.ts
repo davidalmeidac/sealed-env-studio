@@ -12,6 +12,8 @@ import type {
   OpenSealedFileResponse,
   DecryptVaultRequest,
   DecryptVaultResponse,
+  MintUnsealTokenRequest,
+  MintUnsealTokenResponse,
 } from './types';
 
 // ─── Recents ─────────────────────────────────────────────────────────────────
@@ -54,4 +56,10 @@ export async function decryptVault(
   req: DecryptVaultRequest,
 ): Promise<DecryptVaultResponse> {
   return invoke<DecryptVaultResponse>('decrypt_vault', { req });
+}
+
+export async function mintUnsealToken(
+  req: MintUnsealTokenRequest,
+): Promise<MintUnsealTokenResponse> {
+  return invoke<MintUnsealTokenResponse>('mint_unseal_token', { req });
 }
