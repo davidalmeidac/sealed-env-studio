@@ -203,6 +203,7 @@ export function App() {
       {state.kind === 'settings' && (
         <SettingsModal
           initial={settings}
+          recents={recents}
           onSave={handleSaveSettings}
           onClearRecents={handleClearRecents}
           onDismiss={() => dispatch({ type: 'DISMISS_SETTINGS' })}

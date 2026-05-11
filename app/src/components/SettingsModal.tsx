@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import type { AppSettings, SealedMode } from '../lib/types';
+import { useState, useEffect } from 'react';
+import type { AppSettings, RecentEntry, SealedMode } from '../lib/types';
+import { hasVaultCredentials, clearVaultCredentials } from '../lib/credstore';
 
 // Argon2id minimums per spec OQ-2
 const ARGON2_T_MIN = 2;
@@ -8,6 +9,7 @@ const ARGON2_P_MIN = 1;
 
 interface Props {
   initial: AppSettings;
+  recents: RecentEntry[];
   onSave: (settings: AppSettings) => void;
   onClearRecents: () => void;
   onDismiss: () => void;
@@ -19,9 +21,53 @@ interface FieldErrors {
   argon2P?: string;
 }
 
-export function SettingsModal({ initial, onSave, onClearRecents, onDismiss }: Props) {
+export function SettingsModal({ initial, recents, onSave, onClearRecents, onDismiss }: Props) {
   const [draft, setDraft] = useState<AppSettings>({ ...initial });
   const [errors, setErrors] = useState<FieldErrors>({});
+  const [savedCreds, setSavedCreds] = useState<RecentEntry[]>([]);
+  const [credsProbing, setCredsProbing] = useState(true);
+
+  // Probe the OS keychain for each recent to figure out which have saved creds.
+  // keyring doesn't enumerate — we test each known path. Recents is the
+  // canonical list of vaults Studio has seen, so this covers the realistic set.
+  useEffect(() => {
+    let cancelled = false;
+    setCredsProbing(true);
+    void Promise.all(
+      recents.map(async (r) => {
+        try {
+          const has = await hasVaultCredentials({ absolutePath: r.absolutePath });
+          return has ? r : null;
+        } catch {
+          return null;
+        }
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      setSavedCreds(results.filter((r): r is RecentEntry => r !== null));
+      setCredsProbing(false);
+    });
+    return () => { cancelled = true; };
+  }, [recents]);
+
+  const handleClearOne = async (entry: RecentEntry) => {
+    try {
+      await clearVaultCredentials({ absolutePath: entry.absolutePath });
+      setSavedCreds((prev) => prev.filter((e) => e.id !== entry.id));
+    } catch {
+      // Non-fatal; the operator can retry. Silent for now.
+    }
+  };
+
+  const handleClearAll = async () => {
+    const targets = [...savedCreds];
+    await Promise.all(
+      targets.map((e) =>
+        clearVaultCredentials({ absolutePath: e.absolutePath }).catch(() => {}),
+      ),
+    );
+    setSavedCreds([]);
+  };
 
   const validate = (): FieldErrors => {
     const e: FieldErrors = {};
@@ -163,6 +209,64 @@ export function SettingsModal({ initial, onSave, onClearRecents, onDismiss }: Pr
                 )}
               </label>
             </div>
+          </fieldset>
+
+          {/* Saved credentials */}
+          <fieldset className="settings-group">
+            <legend className="settings-group__label">Saved credentials</legend>
+            {credsProbing ? (
+              <p className="settings-group__hint">Checking the system credential manager…</p>
+            ) : savedCreds.length === 0 ? (
+              <p className="settings-group__hint">
+                No vaults have credentials saved on this machine. Saving happens at the end
+                of the Init Wizard, or anytime by unlocking with raw keys and re-running the
+                wizard&apos;s save step.
+              </p>
+            ) : (
+              <>
+                <ul className="settings-creds__list">
+                  {savedCreds.map((entry) => {
+                    const filename = entry.absolutePath
+                      .replace(/\\/g, '/')
+                      .split('/')
+                      .pop() ?? entry.absolutePath;
+                    const dir = (() => {
+                      const norm = entry.absolutePath.replace(/\\/g, '/');
+                      const idx = norm.lastIndexOf('/');
+                      return idx === -1 ? '' : norm.slice(0, idx + 1);
+                    })();
+                    return (
+                      <li key={entry.id} className="settings-creds__item">
+                        <div className="settings-creds__item-info">
+                          <div className="settings-creds__item-name">
+                            <span className="filename">{filename}</span>
+                            <span className={`mode-badge mode-badge--${entry.mode}`}>
+                              {entry.mode.charAt(0).toUpperCase() + entry.mode.slice(1)}
+                            </span>
+                          </div>
+                          <div className="settings-creds__item-path">{dir}</div>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn--ghost btn--small"
+                          onClick={() => { void handleClearOne(entry); }}
+                          aria-label={`Clear saved credentials for ${filename}`}
+                        >
+                          Clear
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--small settings-creds__clear-all"
+                  onClick={() => { void handleClearAll(); }}
+                >
+                  Clear all saved credentials
+                </button>
+              </>
+            )}
           </fieldset>
 
           {/* Danger zone */}
