@@ -21,22 +21,18 @@ adopt-info: studio
 grade: devel
 confinement: strict
 
-# The Sigillum design system uses Cinzel / Fraunces / JetBrains Mono. Snap's
-# default font set covers JetBrains Mono via the gnome platform snap; the
-# others ship inside the snap (downloaded by the build step).
 license: MIT
 issues: https://github.com/davidalmeidac/sealed-env-studio/issues
 source-code: https://github.com/davidalmeidac/sealed-env-studio
 contact: https://github.com/davidalmeidac
 
-# Plugs the operator's keychain (Secret Service via D-Bus) — this is the
-# Tier-1 of the credstore. Without it, credstore falls back to file-based
-# storage which violates the threat model.
+# Plugs the operator's keychain (Secret Service via D-Bus) — this is Tier 1
+# of the credstore. Without it, credstore has no Secret Service to call
+# inside the sandbox.
 plugs:
   password-manager-service:
     interface: password-manager-service
 
-# Standard desktop integration
 apps:
   sealed-env:
     command: usr/bin/sealed-env-studio
@@ -61,65 +57,12 @@ parts:
     source-subdir: app/src-tauri
     rust-channel: stable
 
-    # Tauri 2 requires the frontend bundle to exist at compile time so the
-    # `tauri::generate_context!()` macro can read it. We build it as a
-    # craftctl override before cargo touches the lib crate.
-    override-pull: |
-      craftctl default
-      cd "$CRAFT_PART_SRC/app"
-      # Pin a Node 20 via the snap manifest below — the actual install happens
-      # in the build step. For now, just verify the tree is intact.
-      test -f package.json
-      test -f src-tauri/Cargo.toml
-
-    override-build: |
-      cd "$CRAFT_PART_SRC/app"
-      # Bring up Node 20 + the frontend bundle. snap-installed `node` is on
-      # PATH via the npm part below.
-      npm ci
-      npm run build
-
-      # Hand off to the normal Rust plugin for the Tauri Rust build. We
-      # bypass craftctl default here because Tauri's bundle stage (NSIS / DEB /
-      # AppImage) is the wrong target inside a snap — we want plain binary.
-      cd "$CRAFT_PART_SRC/app/src-tauri"
-      cargo build --release --locked --no-default-features --features custom-protocol
-
-      # Stage the binary + assets
-      install -Dm755 \
-        "$CRAFT_PART_SRC/app/src-tauri/target/release/sealed-env-studio" \
-        "$CRAFT_PART_INSTALL/usr/bin/sealed-env-studio"
-
-      # Desktop entry
-      install -Dm644 /dev/stdin \
-        "$CRAFT_PART_INSTALL/usr/share/applications/sealed-env-studio.desktop" <<'DESKTOP'
-      [Desktop Entry]
-      Name=sealed-env Studio
-      GenericName=Encrypted .env Manager
-      Comment=Desktop GUI for sealed-env vaults
-      Exec=sealed-env-studio
-      Icon=sealed-env-studio
-      Terminal=false
-      Type=Application
-      Categories=Development;Utility;Security;
-      StartupNotify=true
-      StartupWMClass=sealed-env-studio
-      DESKTOP
-
-      # Icons (rendered upstream from the sigillum SVG)
-      for size in 32 128 256 512; do
-        if [ -f "$CRAFT_PART_SRC/app/src-tauri/icons/${size}x${size}.png" ]; then
-          install -Dm644 \
-            "$CRAFT_PART_SRC/app/src-tauri/icons/${size}x${size}.png" \
-            "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/${size}x${size}/apps/sealed-env-studio.png"
-        fi
-      done
-
-      # adopt-info source for the studio part: parse version from Cargo.toml
-      version=$(grep -m1 '^version' "$CRAFT_PART_SRC/app/src-tauri/Cargo.toml" \
-                | cut -d'"' -f2)
-      craftctl set version="$version"
-      craftctl set grade="$( [ "${version#*-}" != "$version" ] && echo devel || echo stable )"
+    # Node 20 + npm are mounted at /snap/node/current/ during build by
+    # snapcraft. Their bin/ directory is automatically on PATH for this
+    # part's override-build. This is cleaner than maintaining a separate
+    # nodejs part with manual organize: rules that don't propagate PATH.
+    build-snaps:
+      - node/20/stable
 
     build-packages:
       - libgtk-3-dev
@@ -137,25 +80,65 @@ parts:
       - libayatana-appindicator3-1
       - librsvg2-2
 
-  # Tauri's Node 20 toolchain bootstrap. Runs before `studio:override-build`
-  # so `npm` is on PATH for the frontend bundle step.
-  nodejs:
-    plugin: nil
-    build-packages:
-      - curl
-      - xz-utils
-    override-build: |
-      NODE_VERSION=20.11.1
-      curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
-        | tar -xJ -C "$CRAFT_PART_INSTALL" --strip-components=1
-    organize:
-      bin/*: usr/local/bin/
-      lib/*: usr/local/lib/
+    override-pull: |
+      craftctl default
+      # Sanity-check the source tree before we waste cycles on cargo
+      test -f "$CRAFT_PART_SRC/app/package.json"
+      test -f "$CRAFT_PART_SRC/app/src-tauri/Cargo.toml"
 
-# Pre-stage the Sigillum brand fonts. The frontend has @font-face for
-# Cinzel + Fraunces + JetBrains Mono but those are normally loaded over
-# the network; in a strict snap with no internet at first launch we ship
-# them as part of the bundle.
-package-repositories: []
+    override-build: |
+      set -eu
+
+      # 1) Frontend bundle — Tauri's `generate_context!()` macro reads
+      # app/dist at compile time and panics if it doesn't exist. Build
+      # the frontend FIRST so cargo can pick it up.
+      cd "$CRAFT_PART_SRC/app"
+      npm ci
+      npm run build
+
+      # 2) Tauri Rust binary. We invoke cargo directly (not via the rust
+      # plugin's default) because Tauri's bundler (NSIS / .deb / AppImage)
+      # is the wrong target inside a snap — we just want the bare binary.
+      cd "$CRAFT_PART_SRC/app/src-tauri"
+      cargo build --release --locked
+
+      # 3) Stage the binary + desktop integration.
+      install -Dm755 \
+        "$CRAFT_PART_SRC/app/src-tauri/target/release/sealed-env-studio" \
+        "$CRAFT_PART_INSTALL/usr/bin/sealed-env-studio"
+
+      install -Dm644 /dev/stdin \
+        "$CRAFT_PART_INSTALL/usr/share/applications/sealed-env-studio.desktop" <<'DESKTOP'
+      [Desktop Entry]
+      Name=sealed-env Studio
+      GenericName=Encrypted .env Manager
+      Comment=Desktop GUI for sealed-env vaults
+      Exec=sealed-env-studio
+      Icon=sealed-env-studio
+      Terminal=false
+      Type=Application
+      Categories=Development;Utility;Security;
+      StartupNotify=true
+      StartupWMClass=sealed-env-studio
+      DESKTOP
+
+      for size in 32 128 256 512; do
+        if [ -f "$CRAFT_PART_SRC/app/src-tauri/icons/${size}x${size}.png" ]; then
+          install -Dm644 \
+            "$CRAFT_PART_SRC/app/src-tauri/icons/${size}x${size}.png" \
+            "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/${size}x${size}/apps/sealed-env-studio.png"
+        fi
+      done
+
+      # 4) adopt-info: derive version + grade from Cargo.toml so the snap
+      # metadata stays in lockstep with the Rust crate.
+      version=$(grep -m1 '^version' "$CRAFT_PART_SRC/app/src-tauri/Cargo.toml" \
+                | cut -d'"' -f2)
+      craftctl set version="$version"
+      if [ "${version#*-}" != "$version" ]; then
+        craftctl set grade=devel
+      else
+        craftctl set grade=stable
+      fi
 
 assumes: [snapd2.55]
