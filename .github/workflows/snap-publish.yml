@@ -1,0 +1,78 @@
+# Build + publish the sealed-env snap to the Snap Store.
+#
+# Trigger: studio-v* tag push (canonical) or workflow_dispatch.
+#
+# Channel resolution from the tag:
+#   studio-v*-alpha*   → edge
+#   studio-v*-beta*    → candidate
+#   studio-v*-rc*      → candidate
+#   studio-v*          → stable
+#
+# Secrets required:
+#   SNAPCRAFT_STORE_CREDENTIALS — output of `snapcraft export-login`
+#                                  with snaps=sealed-env, channels=edge,candidate,stable
+
+name: Snap publish
+
+on:
+  push:
+    tags:
+      - 'studio-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to package (e.g. studio-v0.1.0-alpha.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: snap-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    name: snap build + Store upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Resolve channel
+        id: chan
+        run: |
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          if   [[ "$TAG" == *-alpha* ]]; then CH=edge
+          elif [[ "$TAG" == *-beta*  ]]; then CH=candidate
+          elif [[ "$TAG" == *-rc*    ]]; then CH=candidate
+          else                                CH=stable
+          fi
+          echo "tag=$TAG"      >> "$GITHUB_OUTPUT"
+          echo "channel=$CH"   >> "$GITHUB_OUTPUT"
+
+      - name: Build snap
+        id: snapcraft
+        uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1.3.0
+
+      - name: Upload to Snap Store
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          if [ -z "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
+            echo "::error::SNAPCRAFT_STORE_CREDENTIALS secret must be set"
+            exit 1
+          fi
+          sudo snap install snapcraft --classic
+          snapcraft upload --release=${{ steps.chan.outputs.channel }} \
+            "${{ steps.snapcraft.outputs.snap }}"
+
+      - name: Attach snap to GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
+        with:
+          tag_name: ${{ steps.chan.outputs.tag }}
+          files: ${{ steps.snapcraft.outputs.snap }}
+          fail_on_unmatched_files: true
