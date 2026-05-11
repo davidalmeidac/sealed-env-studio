@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { SealedMode, DecryptVaultResponse } from '../lib/types';
 import { decryptVault, mintUnsealToken } from '../lib/workspace';
+import { readLocalEnv } from '../lib/init';
 import { hasVaultCredentials, loadVaultCredentials } from '../lib/credstore';
 import { parseSecret, verifyTotp, hexToBytes, bytesToHex } from '../lib/totp';
 
@@ -42,6 +43,13 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
   const [showAdvancedToken, setShowAdvancedToken] = useState(false);
   const [mintedToken, setMintedToken] = useState<string | null>(null);
   const [mintedExp, setMintedExp] = useState<number | null>(null);
+  // Legacy `.env.local` compat — read-only autoload for users coming from the
+  // CLI flow. Studio NEVER writes `.env.local` (SEC-010) but reading is opt-in
+  // backward compat. Tracks which fields actually came from the legacy file
+  // so the UI can warn + offer a clear-and-paste-manually escape hatch.
+  const [legacyAutoload, setLegacyAutoload] = useState<Set<'master' | 'signing' | 'totp' | 'token'>>(
+    () => new Set(),
+  );
 
   // ─── Stored-creds (Tier A) mode state ─────────────────────────────────────
   const [credsAvailable, setCredsAvailable] = useState(false);
@@ -58,6 +66,11 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
   const needsTotp = mode === 'enterprise';
 
   const filename = path.replace(/\\/g, '/').split('/').pop() ?? path;
+  const folderPath = (() => {
+    const norm = path.replace(/\\/g, '/');
+    const idx = norm.lastIndexOf('/');
+    return idx === -1 ? '' : norm.slice(0, idx);
+  })();
 
   // Probe the OS keychain on mount. If creds exist, default to passphrase mode.
   useEffect(() => {
@@ -73,6 +86,32 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
       });
     return () => { cancelled = true; };
   }, [path]);
+
+  // Legacy `.env.local` autoload. Opt-in backward compat with CLI users who
+  // have their keys stored next to the vault. Studio never writes that file —
+  // the credstore (OS Credential Manager + passphrase) is the recommended
+  // path. This effect only PRE-FILLS the raw-mode fields; the operator still
+  // sees a banner advising verification before unlocking.
+  useEffect(() => {
+    if (!folderPath) return;
+    let cancelled = false;
+    void readLocalEnv({ folderPath }).then((resp) => {
+      if (cancelled || !resp.found) return;
+      const loaded: typeof legacyAutoload = new Set();
+      if (resp.masterKeyHex) { setMasterKey(resp.masterKeyHex); loaded.add('master'); }
+      if (resp.signingKeyHex) { setSigningKey(resp.signingKeyHex); loaded.add('signing'); }
+      if (resp.totpSecretHex) { setTotpSecret(resp.totpSecretHex); loaded.add('totp'); }
+      if (resp.unsealToken) {
+        setUnsealToken(resp.unsealToken);
+        setShowAdvancedToken(true);
+        loaded.add('token');
+      }
+      if (loaded.size > 0) setLegacyAutoload(loaded);
+    }).catch(() => {
+      // Opportunistic — never blocks unlock.
+    });
+    return () => { cancelled = true; };
+  }, [folderPath]);
 
   const clearFieldError = (key: keyof FieldErrors) => {
     setErrors((prev) => {
@@ -95,6 +134,7 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
     setTotpSecret('');
     setUnsealToken('');
     setShowAdvancedToken(false);
+    setLegacyAutoload(new Set());
     setErrors({});
   };
 
@@ -395,6 +435,28 @@ export function UnlockDialog({ path, mode, rawContent, onUnlocked, onCancel }: P
                     onClick={switchToStoredMode}
                   >
                     Use the passphrase instead
+                  </button>
+                </p>
+              )}
+
+              {legacyAutoload.size > 0 && (
+                <p className="unlock-dialog__autoload-note">
+                  Found legacy <code>.env.local</code>. Verify these match your vault before unlocking.{' '}
+                  <button
+                    type="button"
+                    className="unlock-dialog__autoload-clear"
+                    onClick={() => {
+                      if (legacyAutoload.has('master')) setMasterKey('');
+                      if (legacyAutoload.has('signing')) setSigningKey('');
+                      if (legacyAutoload.has('totp')) setTotpSecret('');
+                      if (legacyAutoload.has('token')) {
+                        setUnsealToken('');
+                        setShowAdvancedToken(false);
+                      }
+                      setLegacyAutoload(new Set());
+                    }}
+                  >
+                    Clear and paste manually
                   </button>
                 </p>
               )}
