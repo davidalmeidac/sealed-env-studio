@@ -42,6 +42,8 @@ pub fn run() {
             init::save_settings,
             init::open_sealed_file,
             init::decrypt_vault,
+            init::mint_unseal_token,
+            init::read_local_env,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
