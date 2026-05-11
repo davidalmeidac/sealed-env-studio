@@ -1,3 +1,4 @@
+pub mod credstore;
 pub mod init;
 pub mod sealed;
 pub mod workspace;
@@ -44,6 +45,11 @@ pub fn run() {
             init::decrypt_vault,
             init::mint_unseal_token,
             init::read_local_env,
+            credstore::save_vault_credentials,
+            credstore::load_vault_credentials,
+            credstore::has_vault_credentials,
+            credstore::clear_vault_credentials,
+            credstore::change_passphrase,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
