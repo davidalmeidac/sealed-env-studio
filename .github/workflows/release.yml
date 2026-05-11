@@ -1,0 +1,193 @@
+# sealed-env Studio · Release builds
+#
+# Triggers when a tag matching `studio-v*` is pushed (e.g. studio-v0.1.0-alpha.1).
+# Builds Tauri installers on the full OS matrix and attaches the artifacts to a
+# GitHub Release.
+#
+# Outputs:
+#   Windows  · NSIS .exe installer + portable .exe (x86_64)
+#   macOS    · .dmg (universal — arm64 + x86_64)
+#   Linux    · .deb, .rpm, .AppImage (x86_64)
+#
+# Code signing is intentionally OFF in this baseline. To enable, set the secrets
+# documented in the tauri-action README and uncomment the corresponding env
+# blocks below. Signed builds matter for SmartScreen / Gatekeeper / Snap stores;
+# they're out of scope for `0.1.0-alpha.*`.
+#
+# All actions pinned to commit SHAs per SEC-021.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'studio-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. studio-v0.1.0-alpha.1). Required for manual runs.'
+        required: true
+        type: string
+
+permissions:
+  contents: write   # required to attach artifacts to the GitHub Release
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false   # never cancel a release mid-flight
+
+jobs:
+  create-release:
+    name: Create draft release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.draft.outputs.result }}
+      tag: ${{ steps.tag.outputs.value }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create draft release
+        id: draft
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.1.0
+        with:
+          script: |
+            const tag = "${{ steps.tag.outputs.value }}";
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `sealed-env Studio · ${tag}`,
+              draft: true,
+              prerelease: tag.includes('-alpha') || tag.includes('-beta') || tag.includes('-rc'),
+              body: [
+                `### Installers`,
+                ``,
+                `| Platform | Artifact |`,
+                `|---|---|`,
+                `| Windows | \`.exe\` installer (NSIS) |`,
+                `| macOS   | \`.dmg\` (universal arm64 + x86_64) |`,
+                `| Linux   | \`.deb\` / \`.rpm\` / \`.AppImage\` |`,
+                ``,
+                `Builds are **unsigned** in this release line. SmartScreen / Gatekeeper`,
+                `will warn on first run — bypass via right-click → Open on macOS,`,
+                `"More info → Run anyway" on Windows. Signing lands in a later milestone.`,
+                ``,
+                `Full source under \`${tag}\`.`,
+              ].join('\n'),
+            });
+            return data.id;
+          result-encoding: string
+
+  build:
+    name: Build · ${{ matrix.label }}
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            args: ''
+          - label: macOS universal
+            os: macos-latest
+            target: universal-apple-darwin
+            args: '--target universal-apple-darwin'
+          - label: Windows x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Setup Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Cache cargo (per OS + target)
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            app/src-tauri/target
+          key: ${{ runner.os }}-release-${{ matrix.target }}-${{ hashFiles('app/src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-release-${{ matrix.target }}-
+
+      - name: Install Linux Tauri dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            patchelf \
+            pkg-config
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Build & upload artifacts
+        uses: tauri-apps/tauri-action@8c3e0753aa015d00d03631d6d4f64ad59489251d # v0.5.20
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signing env vars intentionally left empty in this baseline.
+          # Uncomment + populate from secrets to enable per-platform signing:
+          #
+          # Windows Authenticode:
+          #   TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          #
+          # macOS Developer ID + notarization:
+          #   APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          #   APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          #   APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          #   APPLE_ID: ${{ secrets.APPLE_ID }}
+          #   APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          #   APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: app
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: ${{ matrix.args }}
+
+  publish:
+    name: Publish release
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Flip draft to published
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.1.0
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: "${{ needs.create-release.outputs.release_id }}",
+              draft: false,
+            });
