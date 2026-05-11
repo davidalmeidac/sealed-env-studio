@@ -1666,3 +1666,66 @@ body { display: block; padding: 0; }
   min-width: 60px;
   text-align: right;
 }
+
+/* ── Settings · Saved credentials section (Phase-4) ───────── */
+.settings-creds__list {
+  list-style: none;
+  margin: var(--s3) 0 var(--s3) 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.settings-creds__item {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  background: var(--cream-3);
+  border: 1px solid rgba(26, 22, 18, 0.08);
+  border-radius: var(--radius);
+  padding: var(--s2) var(--s3);
+  transition: border-color 0.15s;
+}
+.settings-creds__item:hover {
+  border-color: rgba(168, 32, 26, 0.3);
+}
+
+.settings-creds__item-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-creds__item-name {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.settings-creds__item-name .filename {
+  font-family: var(--font-head);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.5px;
+}
+
+.settings-creds__item-path {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-creds__clear-all {
+  align-self: flex-start;
+  color: var(--wax);
+}
+.settings-creds__clear-all:hover {
+  color: var(--wax-dark);
+  border-color: var(--wax-dark);
+}
