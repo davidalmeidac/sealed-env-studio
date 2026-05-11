@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 
-import type { SealedFile } from '../data/mock';
+import type { SealedFileContent } from '../lib/types';
 import { VariableRow } from './VariableRow';
 
 interface Props {
-  file: SealedFile;
+  file: SealedFileContent;
   filterText: string;
 }
 
@@ -19,9 +19,7 @@ interface Props {
  * decryption call. The component shape stays the same.
  */
 export function VariableViewer({ file, filterText }: Props) {
-  const [revealed, setRevealed] = useState<Set<string>>(
-    () => new Set(file.variables.filter((v) => v.revealed).map((v) => v.key)),
-  );
+  const [revealed, setRevealed] = useState<Set<string>>(() => new Set<string>());
 
   const filtered = useMemo(() => {
     const q = filterText.trim().toLowerCase();

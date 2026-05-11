@@ -2,10 +2,13 @@ use crate::sealed::{
     crypto,
     errors::SealedError,
     format::{KdfParams, SealedMode},
-    SealParams,
+    DecryptKeys, SealParams,
 };
+use crate::workspace::{self, AppSettings, RecentEntry};
+use crate::AppState;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use tauri::State;
 
 // ======================================================================
 // Request / Response types
@@ -314,6 +317,439 @@ pub fn ensure_gitignore(req: EnsureGitignoreRequest) -> Result<EnsureGitignoreRe
     Ok(EnsureGitignoreResponse { modified: true })
 }
 
+// ======================================================================
+// Workspace command types
+// ======================================================================
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetRecentsResponse {
+    pub entries: Vec<RecentEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushRecentRequest {
+    pub entry: RecentEntry,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveRecentRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveSettingsRequest {
+    pub settings: AppSettings,
+}
+
+// ======================================================================
+// Vault open + decrypt types
+// ======================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadLocalEnvRequest {
+    /// Folder that contains the `.env.sealed` file. We probe `<folder>/.env.local`.
+    pub folder_path: String,
+}
+
+#[derive(Debug, Default, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadLocalEnvResponse {
+    /// True only when `.env.local` exists at the expected path.
+    pub found: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub master_key_hex: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signing_key_hex: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub totp_secret_hex: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unseal_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenSealedFileRequest {
+    pub absolute_path: String,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenSealedFileResponse {
+    pub mode: String,
+    pub raw_content: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecryptVaultRequest {
+    pub raw_content: String,
+    pub master_key_hex: String,
+    pub signing_key_hex: Option<String>,
+    /// Pre-built unseal token (e.g. `usl_...` from the CLI). Takes precedence over `totp_secret_hex` when both are present.
+    pub unseal_token: Option<String>,
+    /// Raw TOTP secret (hex). When provided and `unseal_token` is empty, Studio mints the token internally.
+    pub totp_secret_hex: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MintUnsealTokenRequest {
+    pub raw_content: String,
+    pub master_key_hex: String,
+    pub totp_secret_hex: String,
+    /// Optional deploy binding (commit SHA, etc). Mirrors CLI semantics.
+    pub deploy_id: Option<String>,
+    /// Time-to-live in seconds. Capped to [5, 600]. Default 60.
+    pub ttl_seconds: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MintUnsealTokenResponse {
+    pub unseal_token: String,
+    pub ttl_seconds: u64,
+    pub exp_unix: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParsedVariable {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecryptVaultResponse {
+    pub variables: Vec<ParsedVariable>,
+    pub kdf: String,
+    pub created: String,
+}
+
+// ======================================================================
+// Workspace Tauri command handlers
+// ======================================================================
+
+fn recents_path(state: &AppState) -> Result<std::path::PathBuf, SealedError> {
+    let guard = state.app_data_dir.lock().unwrap();
+    let dir = guard
+        .as_ref()
+        .ok_or_else(|| SealedError::ValidationError("app_data_dir not initialised".to_string()))?;
+    Ok(dir.join("recents.json"))
+}
+
+fn settings_path(state: &AppState) -> Result<std::path::PathBuf, SealedError> {
+    let guard = state.app_data_dir.lock().unwrap();
+    let dir = guard
+        .as_ref()
+        .ok_or_else(|| SealedError::ValidationError("app_data_dir not initialised".to_string()))?;
+    Ok(dir.join("settings.json"))
+}
+
+/// Return the current recents list.
+#[tauri::command]
+pub fn get_recents(state: State<'_, AppState>) -> Result<GetRecentsResponse, SealedError> {
+    let path = recents_path(&state)?;
+    let entries = workspace::load_recents(&path);
+    Ok(GetRecentsResponse { entries })
+}
+
+/// Add or update an entry in the recents list.
+#[tauri::command]
+pub fn push_recent(
+    req: PushRecentRequest,
+    state: State<'_, AppState>,
+) -> Result<(), SealedError> {
+    let path = recents_path(&state)?;
+    workspace::push_recent(&path, req.entry)
+        .map_err(|e| SealedError::ValidationError(e.to_string()))
+}
+
+/// Remove a recent entry by id.
+#[tauri::command]
+pub fn remove_recent(
+    req: RemoveRecentRequest,
+    state: State<'_, AppState>,
+) -> Result<(), SealedError> {
+    let path = recents_path(&state)?;
+    workspace::remove_recent(&path, &req.id)
+        .map_err(|e| SealedError::ValidationError(e.to_string()))
+}
+
+/// Clear all recents.
+#[tauri::command]
+pub fn clear_recents(state: State<'_, AppState>) -> Result<(), SealedError> {
+    let path = recents_path(&state)?;
+    workspace::clear_recents(&path)
+        .map_err(|e| SealedError::ValidationError(e.to_string()))
+}
+
+/// Return the current app settings.
+#[tauri::command]
+pub fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, SealedError> {
+    let path = settings_path(&state)?;
+    Ok(workspace::load_settings(&path))
+}
+
+/// Persist app settings.
+#[tauri::command]
+pub fn save_settings(
+    req: SaveSettingsRequest,
+    state: State<'_, AppState>,
+) -> Result<(), SealedError> {
+    let path = settings_path(&state)?;
+    workspace::save_settings(&path, &req.settings)
+        .map_err(|e| SealedError::ValidationError(e.to_string()))
+}
+
+// ======================================================================
+// Vault open + decrypt Tauri command handlers
+// ======================================================================
+
+/// Read `<folder>/.env.local` and extract `SEALED_ENV_*` credentials, if any.
+///
+/// Returns `found = false` and no fields when the file is absent. When present,
+/// each field is best-effort: invalid hex or wrong-length values are dropped
+/// silently rather than surfacing a parse error, so the UI can pre-fill what's
+/// usable without blocking the user. Hex validation matches `decrypt_vault`
+/// expectations: master + signing = 32 bytes (64 hex), totp = 20 bytes (40 hex).
+#[tauri::command]
+pub fn read_local_env(req: ReadLocalEnvRequest) -> Result<ReadLocalEnvResponse, SealedError> {
+    let path = std::path::Path::new(&req.folder_path).join(".env.local");
+    if !path.is_file() {
+        return Ok(ReadLocalEnvResponse::default());
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| SealedError::ValidationError(e.to_string()))?;
+
+    let mut out = ReadLocalEnvResponse {
+        found: true,
+        ..Default::default()
+    };
+
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = strip_quotes(value.trim());
+
+        match key {
+            "SEALED_ENV_KEY" => {
+                if hex_well_formed(value, 64) {
+                    out.master_key_hex = Some(value.to_string());
+                }
+            }
+            "SEALED_ENV_SIGNING_KEY" => {
+                if hex_well_formed(value, 64) {
+                    out.signing_key_hex = Some(value.to_string());
+                }
+            }
+            "SEALED_ENV_TOTP_SECRET" => {
+                if hex_well_formed(value, 40) {
+                    out.totp_secret_hex = Some(value.to_string());
+                }
+            }
+            "SEALED_ENV_UNSEAL_TOKEN" => {
+                if value.starts_with("usl_") && !value.contains(char::is_whitespace) {
+                    out.unseal_token = Some(value.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(out)
+}
+
+fn strip_quotes(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2
+        && ((bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')
+            || (bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\''))
+    {
+        &s[1..s.len() - 1]
+    } else {
+        s
+    }
+}
+
+fn hex_well_formed(s: &str, expected_chars: usize) -> bool {
+    s.len() == expected_chars && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Read a .env.sealed file and return its mode + raw content.
+/// Does NOT decrypt. Used to show the UnlockDialog with the correct mode.
+#[tauri::command]
+pub fn open_sealed_file(req: OpenSealedFileRequest) -> Result<OpenSealedFileResponse, SealedError> {
+    let raw = std::fs::read_to_string(&req.absolute_path)
+        .map_err(|e| SealedError::ValidationError(e.to_string()))?;
+
+    // Parse just the header line to extract the mode (no crypto yet).
+    let first_line = raw.lines().next().unwrap_or("");
+    let mode_str = first_line
+        .strip_prefix("SEALED-ENV-V1 MODE=")
+        .ok_or(SealedError::FormatInvalid)?;
+
+    // Validate the mode is one of the three known values.
+    match mode_str {
+        "basic" | "team" | "enterprise" => {}
+        _ => return Err(SealedError::FormatInvalid),
+    }
+
+    Ok(OpenSealedFileResponse {
+        mode: mode_str.to_string(),
+        raw_content: raw,
+    })
+}
+
+/// Mint an enterprise unseal token from a vault + master/TOTP material.
+///
+/// Used by the Studio UI to generate a token without leaving the app
+/// (so the operator doesn't need the CLI). Cross-stack: the resulting
+/// token is identical in shape to `sealed-env unseal --secret … --totp …`.
+#[tauri::command]
+pub fn mint_unseal_token(
+    req: MintUnsealTokenRequest,
+) -> Result<MintUnsealTokenResponse, SealedError> {
+    use crate::sealed::format;
+    use crate::sealed::totp::{build_unseal_token, BuildTokenInput};
+    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+
+    let master_key = validate_hex(&req.master_key_hex, 32)?;
+    let totp_secret = validate_hex(&req.totp_secret_hex, 20)?;
+
+    let file = format::parse(&req.raw_content)?;
+    if file.mode != format::SealedMode::Enterprise {
+        return Err(SealedError::ValidationError(
+            "unseal tokens only apply to enterprise mode vaults".to_string(),
+        ));
+    }
+
+    let salt_bytes = B64
+        .decode(&file.salt)
+        .map_err(|_| SealedError::FormatInvalid)?;
+
+    let derived_key = crate::sealed::crypto::kdf_derive(&master_key, &salt_bytes, &file.kdf_params)?;
+
+    let ttl = req.ttl_seconds.unwrap_or(60).clamp(5, 600);
+    let token = build_unseal_token(BuildTokenInput {
+        derived_key: &derived_key,
+        totp_secret: &totp_secret,
+        salt: &salt_bytes,
+        deploy_id: req.deploy_id,
+        ttl_seconds: ttl,
+    })?;
+
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| SealedError::ValidationError("system clock".to_string()))?
+        .as_secs() as i64;
+
+    Ok(MintUnsealTokenResponse {
+        unseal_token: token,
+        ttl_seconds: ttl,
+        exp_unix: now_unix + ttl as i64,
+    })
+}
+
+/// Decrypt a sealed vault (raw content already loaded) and return parsed variables.
+#[tauri::command]
+pub fn decrypt_vault(
+    req: DecryptVaultRequest,
+    state: State<'_, AppState>,
+) -> Result<DecryptVaultResponse, SealedError> {
+    use crate::sealed::format;
+    use crate::sealed::totp::{build_unseal_token, BuildTokenInput};
+    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+
+    let master_key = validate_hex(&req.master_key_hex, 32)?;
+
+    let signing_key = req
+        .signing_key_hex
+        .as_deref()
+        .map(|s| validate_hex(s, 32))
+        .transpose()?;
+
+    // Resolve the unseal_token: explicit token wins; otherwise mint from totp_secret_hex.
+    // For non-enterprise vaults both fields are simply ignored downstream.
+    let unseal_token = match (req.unseal_token, req.totp_secret_hex.as_deref()) {
+        (Some(t), _) if !t.is_empty() => Some(t),
+        (_, Some(hex_secret)) if !hex_secret.is_empty() => {
+            // Mint internally — only meaningful for enterprise vaults.
+            let totp_secret = validate_hex(hex_secret, 20)?;
+            let file = format::parse(&req.raw_content)?;
+            if file.mode == format::SealedMode::Enterprise {
+                let salt_bytes = B64
+                    .decode(&file.salt)
+                    .map_err(|_| SealedError::FormatInvalid)?;
+                let derived_key = crate::sealed::crypto::kdf_derive(
+                    &master_key,
+                    &salt_bytes,
+                    &file.kdf_params,
+                )?;
+                Some(build_unseal_token(BuildTokenInput {
+                    derived_key: &derived_key,
+                    totp_secret: &totp_secret,
+                    salt: &salt_bytes,
+                    deploy_id: None,
+                    ttl_seconds: 60,
+                })?)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+
+    let keys = DecryptKeys {
+        master_key,
+        signing_key,
+        unseal_token,
+    };
+
+    // decrypt() needs a mutable OpsCache for token replay protection.
+    let mut ops_cache = state.ops_cache.lock().unwrap();
+    let plaintext = crate::sealed::decrypt(&req.raw_content, keys, &mut ops_cache)?;
+
+    // Parse plaintext into key-value pairs.
+    let pairs = crate::sealed::parse_dotenv(&plaintext);
+    let variables = pairs
+        .into_iter()
+        .map(|(key, value)| ParsedVariable { key, value })
+        .collect();
+
+    // Extract KDF and CREATED from the raw content for display.
+    let mut kdf = String::new();
+    let mut created = String::new();
+    for line in req.raw_content.lines() {
+        if let Some(v) = line.strip_prefix("KDF=") {
+            kdf = v.to_string();
+        } else if let Some(v) = line.strip_prefix("KDF-PARAMS=") {
+            if !kdf.is_empty() {
+                kdf = format!("{} ({})", kdf, v);
+            }
+        } else if let Some(v) = line.strip_prefix("CREATED=") {
+            created = v.to_string();
+        }
+    }
+
+    Ok(DecryptVaultResponse {
+        variables,
+        kdf,
+        created,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,5 +830,265 @@ mod tests {
         assert_eq!(resp.detected_templates.len(), 1);
         assert_eq!(resp.detected_templates[0].file_name, ".env.example");
         assert_eq!(resp.existing_sealed_files.len(), 1);
+    }
+
+    #[test]
+    fn open_sealed_file_returns_mode_and_content() {
+        use tempfile::TempDir;
+        use std::fs;
+        let dir = TempDir::new().unwrap();
+        let sealed_content = "SEALED-ENV-V1 MODE=team\nKDF=argon2id\nKDF-PARAMS=t=3,m=65536,p=4\nSALT=AAAA\nNONCE=BBBB\nAAD-DIGEST=CCCC\nHMAC=DDDD\nCREATED=2026-01-01T00:00:00.000Z\n\nEEEE";
+        let path = dir.path().join("test.env.sealed");
+        fs::write(&path, sealed_content).unwrap();
+
+        let resp = open_sealed_file(OpenSealedFileRequest {
+            absolute_path: path.to_str().unwrap().to_string(),
+        })
+        .unwrap();
+
+        assert_eq!(resp.mode, "team");
+        assert!(resp.raw_content.starts_with("SEALED-ENV-V1 MODE=team"));
+    }
+
+    #[test]
+    fn open_sealed_file_rejects_unknown_mode() {
+        use tempfile::TempDir;
+        use std::fs;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("bad.env.sealed");
+        fs::write(&path, "SEALED-ENV-V1 MODE=supermode\n").unwrap();
+
+        let result = open_sealed_file(OpenSealedFileRequest {
+            absolute_path: path.to_str().unwrap().to_string(),
+        });
+        assert_eq!(result, Err(SealedError::FormatInvalid));
+    }
+
+    fn fixture_enterprise_vault() -> (String, String, String) {
+        // Seal a real enterprise vault and return (raw, master_hex, totp_secret_hex)
+        let master = vec![0x42u8; 32];
+        let signing = vec![0x33u8; 32];
+        let totp_secret = vec![0xABu8; 20];
+        let kdf = crate::sealed::format::KdfParams::Argon2id {
+            t: 2,
+            m: 16384,
+            p: 1,
+        };
+        let sealed = crate::sealed::seal(crate::sealed::SealParams {
+            mode: crate::sealed::format::SealedMode::Enterprise,
+            plaintext: "FOO=bar\nBAZ=qux\n".to_string(),
+            master_key: master.clone(),
+            signing_key: Some(signing),
+            totp_secret: Some(totp_secret.clone()),
+            kdf_params: kdf,
+        })
+        .unwrap();
+        (sealed, hex::encode(&master), hex::encode(&totp_secret))
+    }
+
+    #[test]
+    fn mint_unseal_token_succeeds_for_enterprise_vault() {
+        let (raw, master_hex, totp_hex) = fixture_enterprise_vault();
+        let resp = mint_unseal_token(MintUnsealTokenRequest {
+            raw_content: raw,
+            master_key_hex: master_hex,
+            totp_secret_hex: totp_hex,
+            deploy_id: None,
+            ttl_seconds: Some(60),
+        })
+        .unwrap();
+        assert!(resp.unseal_token.starts_with("usl_"));
+        assert_eq!(resp.ttl_seconds, 60);
+        assert!(resp.exp_unix > 0);
+    }
+
+    #[test]
+    fn mint_unseal_token_rejects_non_enterprise_vault() {
+        // Seal a basic vault and try to mint a token for it — must fail
+        let master = vec![0x42u8; 32];
+        let sealed = crate::sealed::seal(crate::sealed::SealParams {
+            mode: crate::sealed::format::SealedMode::Basic,
+            plaintext: "K=v".to_string(),
+            master_key: master.clone(),
+            signing_key: None,
+            totp_secret: None,
+            kdf_params: crate::sealed::format::KdfParams::Argon2id {
+                t: 2,
+                m: 16384,
+                p: 1,
+            },
+        })
+        .unwrap();
+
+        let result = mint_unseal_token(MintUnsealTokenRequest {
+            raw_content: sealed,
+            master_key_hex: hex::encode(&master),
+            totp_secret_hex: hex::encode([0xABu8; 20]),
+            deploy_id: None,
+            ttl_seconds: None,
+        });
+        match result {
+            Err(SealedError::ValidationError(msg)) => assert!(msg.contains("enterprise")),
+            other => panic!("expected ValidationError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn mint_unseal_token_rejects_bad_master_hex() {
+        let (raw, _, totp_hex) = fixture_enterprise_vault();
+        let result = mint_unseal_token(MintUnsealTokenRequest {
+            raw_content: raw,
+            master_key_hex: "zzzz".to_string(),
+            totp_secret_hex: totp_hex,
+            deploy_id: None,
+            ttl_seconds: None,
+        });
+        match result {
+            Err(SealedError::ValidationError(_)) => {}
+            other => panic!("expected ValidationError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn mint_unseal_token_ttl_clamped() {
+        let (raw, master_hex, totp_hex) = fixture_enterprise_vault();
+        let resp = mint_unseal_token(MintUnsealTokenRequest {
+            raw_content: raw,
+            master_key_hex: master_hex,
+            totp_secret_hex: totp_hex,
+            deploy_id: None,
+            ttl_seconds: Some(999_999),
+        })
+        .unwrap();
+        assert_eq!(resp.ttl_seconds, 600, "TTL must be capped at 600s");
+    }
+
+    // ─── read_local_env tests ─────────────────────────────────────────
+
+    #[test]
+    fn read_local_env_returns_not_found_when_missing() {
+        use tempfile::TempDir;
+        let dir = TempDir::new().unwrap();
+        let resp = read_local_env(ReadLocalEnvRequest {
+            folder_path: dir.path().to_str().unwrap().to_string(),
+        })
+        .unwrap();
+        assert!(!resp.found);
+        assert_eq!(resp.master_key_hex, None);
+        assert_eq!(resp.signing_key_hex, None);
+        assert_eq!(resp.totp_secret_hex, None);
+        assert_eq!(resp.unseal_token, None);
+    }
+
+    #[test]
+    fn read_local_env_extracts_all_sealed_env_vars() {
+        use std::fs;
+        use tempfile::TempDir;
+        let dir = TempDir::new().unwrap();
+        let content = "\
+# Auto-generated by sealed-env init — do NOT commit\n\
+SEALED_ENV_KEY=4242424242424242424242424242424242424242424242424242424242424242\n\
+SEALED_ENV_SIGNING_KEY=3333333333333333333333333333333333333333333333333333333333333333\n\
+SEALED_ENV_TOTP_SECRET=abababababababababababababababababababab\n\
+SEALED_ENV_UNSEAL_TOKEN=usl_abc.def.ghi\n\
+UNRELATED_VAR=ignored\n\
+";
+        fs::write(dir.path().join(".env.local"), content).unwrap();
+
+        let resp = read_local_env(ReadLocalEnvRequest {
+            folder_path: dir.path().to_str().unwrap().to_string(),
+        })
+        .unwrap();
+
+        assert!(resp.found);
+        assert_eq!(
+            resp.master_key_hex.as_deref(),
+            Some("4242424242424242424242424242424242424242424242424242424242424242")
+        );
+        assert_eq!(
+            resp.signing_key_hex.as_deref(),
+            Some("3333333333333333333333333333333333333333333333333333333333333333")
+        );
+        assert_eq!(
+            resp.totp_secret_hex.as_deref(),
+            Some("abababababababababababababababababababab")
+        );
+        assert_eq!(resp.unseal_token.as_deref(), Some("usl_abc.def.ghi"));
+    }
+
+    #[test]
+    fn read_local_env_skips_comments_and_blank_lines() {
+        use std::fs;
+        use tempfile::TempDir;
+        let dir = TempDir::new().unwrap();
+        let content = "\
+\n\
+# A comment\n\
+\n\
+SEALED_ENV_KEY=4242424242424242424242424242424242424242424242424242424242424242\n\
+\n\
+# Another comment\n\
+";
+        fs::write(dir.path().join(".env.local"), content).unwrap();
+
+        let resp = read_local_env(ReadLocalEnvRequest {
+            folder_path: dir.path().to_str().unwrap().to_string(),
+        })
+        .unwrap();
+        assert!(resp.found);
+        assert!(resp.master_key_hex.is_some());
+    }
+
+    #[test]
+    fn read_local_env_strips_quotes_around_values() {
+        use std::fs;
+        use tempfile::TempDir;
+        let dir = TempDir::new().unwrap();
+        let content = "SEALED_ENV_KEY=\"4242424242424242424242424242424242424242424242424242424242424242\"\n";
+        fs::write(dir.path().join(".env.local"), content).unwrap();
+
+        let resp = read_local_env(ReadLocalEnvRequest {
+            folder_path: dir.path().to_str().unwrap().to_string(),
+        })
+        .unwrap();
+        assert_eq!(
+            resp.master_key_hex.as_deref(),
+            Some("4242424242424242424242424242424242424242424242424242424242424242")
+        );
+    }
+
+    #[test]
+    fn read_local_env_ignores_invalid_hex_silently() {
+        // If a field is present but invalid (e.g. wrong length / non-hex), drop it.
+        // This avoids leaking parser errors to the UI for an opportunistic load.
+        use std::fs;
+        use tempfile::TempDir;
+        let dir = TempDir::new().unwrap();
+        let content = "\
+SEALED_ENV_KEY=nothex\n\
+SEALED_ENV_SIGNING_KEY=3333333333333333333333333333333333333333333333333333333333333333\n\
+";
+        fs::write(dir.path().join(".env.local"), content).unwrap();
+
+        let resp = read_local_env(ReadLocalEnvRequest {
+            folder_path: dir.path().to_str().unwrap().to_string(),
+        })
+        .unwrap();
+        assert!(resp.found);
+        assert_eq!(resp.master_key_hex, None, "invalid hex must be dropped");
+        assert!(resp.signing_key_hex.is_some(), "valid sibling must pass through");
+    }
+
+    #[test]
+    fn decrypt_vault_rejects_bad_hex() {
+        // The decrypt_vault command uses an AppState. We test the hex validation
+        // path which happens before touching AppState.
+        // We can't easily instantiate a tauri::State in unit tests, so we test
+        // validate_hex directly which is the same path.
+        let result = validate_hex("zzzz", 32);
+        match result {
+            Err(SealedError::ValidationError(_)) => {}
+            other => panic!("expected ValidationError, got {:?}", other),
+        }
     }
 }

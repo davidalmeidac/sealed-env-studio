@@ -1,62 +1,292 @@
 /*
- * App layout — the desktop-app shell.
- *
- * Two design intents:
- *   1. The window chrome should render fine in the browser too,
- *      so Phase-1 development doesn't need Tauri.
- *   2. When we wrap with Tauri later, we can hide the .titlebar
- *      block (Tauri provides its own native titlebar).
+ * App layout — sealed-env Studio shell.
+ * Custom Tauri titlebar (decorations: false) + state-driven body.
  */
 
-body {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
+html, body, #root {
+  height: 100%;
+  background: var(--cream);
 }
 
-/* ── Outer window ─────────────────────────────────────────── */
+body { display: block; padding: 0; }
+
+/* ── App shell (fills window) ─────────────────────────────── */
 .app-shell {
-  width: 1100px;
-  max-width: 100%;
-  height: min(720px, calc(100vh - 48px));
+  width: 100%;
+  height: 100vh;
   background: var(--cream);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  overflow: hidden;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
+/* ── Custom Tauri titlebar ────────────────────────────────── */
 .titlebar {
   display: flex;
   align-items: center;
-  gap: var(--s3);
-  padding: var(--s3) var(--s4);
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 0 0 var(--s4);
   background: var(--cream-2);
   border-bottom: 1px solid rgba(26, 22, 18, 0.08);
   font-size: 12px;
   color: var(--ink-2);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-.traffic-lights {
+.titlebar__brand {
   display: flex;
-  gap: var(--s2);
+  align-items: center;
+  gap: var(--s3);
+  flex: 1;
+  height: 100%;
 }
-.traffic-lights span {
-  width: 12px; height: 12px; border-radius: 50%;
-  display: block;
+
+.titlebar__sigil {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--wax);
+  color: var(--cream);
+  font-family: var(--font-head);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  box-shadow: 0 1px 3px rgba(168, 32, 26, 0.3);
 }
-.traffic-lights .red    { background: #ff5f57; }
-.traffic-lights .yellow { background: #febc2e; }
-.traffic-lights .green  { background: #28c840; }
 
 .titlebar__title {
   font-family: var(--font-mono);
   font-size: 12px;
-  flex: 1;
-  text-align: center;
   color: var(--ink-2);
+}
+
+.titlebar__controls {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+}
+
+.titlebar__btn {
+  width: 44px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--ink-2);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.titlebar__btn:hover {
+  background: rgba(26, 22, 18, 0.06);
+}
+.titlebar__btn--close:hover {
+  background: var(--wax);
+  color: var(--cream);
+}
+
+/* ── Welcome screen ───────────────────────────────────────── */
+.welcome {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s8);
+  position: relative;
+  overflow-y: auto;
+}
+
+.welcome__settings {
+  position: absolute;
+  top: var(--s4);
+  right: var(--s4);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.welcome__settings:hover {
+  background: var(--cream-2);
+  color: var(--ink);
+}
+
+.welcome__inner {
+  max-width: 480px;
+  width: 100%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s4);
+}
+
+.welcome__sigillum {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: var(--wax);
+  color: var(--cream);
+  font-family: var(--font-head);
+  font-size: 56px;
+  font-weight: 700;
+  letter-spacing: -2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(168, 32, 26, 0.25);
+  margin-bottom: var(--s4);
+  user-select: none;
+}
+
+.welcome__title {
+  font-family: var(--font-head);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: var(--ink);
+  text-transform: none;
+}
+
+.welcome__tagline {
+  font-family: var(--font-body);
+  font-style: italic;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.welcome__tagline code {
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 12px;
+  background: var(--cream-2);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+}
+
+.welcome__actions {
+  display: flex;
+  gap: var(--s3);
+  margin-top: var(--s2);
+}
+
+/* ── Recents (inside welcome) ─────────────────────────────── */
+.recents {
+  width: 100%;
+  margin-top: var(--s6);
+  text-align: left;
+}
+
+.recents__title {
+  font-family: var(--font-head);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: var(--s3);
+}
+
+.recents__empty {
+  font-style: italic;
+  color: var(--ink-3);
+  font-size: 13px;
+  text-align: center;
+  padding: var(--s4);
+}
+
+.recents__list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.recents__item {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  background: var(--cream-3);
+  border: 1px solid rgba(26, 22, 18, 0.08);
+  border-radius: var(--radius);
+  padding: var(--s3);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.recents__item:hover {
+  border-color: var(--wax);
+  box-shadow: var(--shadow-sm);
+}
+
+.recents__item-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 4px var(--s3);
+  background: transparent;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+}
+
+.recents__item-name {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+}
+.recents__item-name .filename {
+  font-family: var(--font-head);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.5px;
+}
+
+.recents__item-path {
+  grid-column: 1;
+  grid-row: 2;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recents__item-date {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.recents__item-remove {
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 8px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.recents__item:hover .recents__item-remove {
+  opacity: 1;
 }
 
 /* ── Top bar (file path + mode) ───────────────────────────── */
@@ -301,4 +531,1061 @@ body {
 .footer .stat {
   font-family: var(--font-mono);
   font-style: normal;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * Phase-2 styles — added by supervisor session 2026-05-10.
+ *
+ * Context: the studio session re-implemented Phase-2 components but
+ * the new BEM namespaces (.wizard*, .modal*, .settings-group*,
+ * .unlock-dialog*, .field-error*) had no CSS rules. Components
+ * rendered as unstyled flow.
+ *
+ * These rules preserve the sigillum design language: cream/wax/ink
+ * + Cinzel/Fraunces/JetBrains Mono. They live at the bottom of the
+ * file so the next refactor can extract them into their own
+ * stylesheet (wizard.css, modal.css) without touching the original
+ * Phase-1 styles above.
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Wizard (Init flow — replaces welcome inside the app-shell) ─── */
+.wizard {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--cream);
+}
+
+/* The wizard's own header strip (step counter) reuses `.titlebar`
+   semantically but we want it lighter than the OS chrome titlebar
+   on top. Override here.  */
+.wizard > .titlebar {
+  background: var(--cream-3);
+  border-bottom: 1px solid rgba(26, 22, 18, 0.06);
+  justify-content: center;
+}
+.wizard > .titlebar .titlebar__title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  letter-spacing: 0.5px;
+  text-align: center;
+  flex: 0 1 auto;
+}
+
+.wizard__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s8) var(--s6);
+  display: flex;
+  justify-content: center;
+}
+
+.wizard__footer {
+  padding: var(--s4) var(--s6);
+  border-top: 1px solid rgba(26, 22, 18, 0.08);
+  background: var(--cream-2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+
+/* Single step's content card — centered column, max-width clamps
+   readability on wide windows. */
+.wizard__step {
+  width: 100%;
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.wizard__step-title {
+  font-family: var(--font-head);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--ink);
+  margin: 0;
+}
+
+.wizard__step-desc {
+  font-family: var(--font-body);
+  font-style: italic;
+  color: var(--ink-2);
+  line-height: 1.55;
+  margin: 0;
+}
+.wizard__step-desc code {
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 0.9em;
+  background: var(--cream-2);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.wizard__step-info {
+  background: var(--cream-2);
+  border-left: 3px solid var(--wax);
+  border-radius: var(--radius);
+  padding: var(--s3) var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wizard__step-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-2);
+  word-break: break-all;
+}
+
+.wizard__step-templates {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: var(--s2) 0 0;
+}
+
+.wizard__step-textarea {
+  width: 100%;
+  min-height: 220px;
+  padding: var(--s3);
+  border: 1px solid rgba(26, 22, 18, 0.15);
+  border-radius: var(--radius);
+  background: #fcfaf5;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.wizard__step-textarea:focus {
+  border-color: var(--wax);
+  box-shadow: 0 0 0 3px rgba(168, 32, 26, 0.12);
+}
+
+.wizard__step-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-2);
+  user-select: none;
+  cursor: pointer;
+}
+
+/* ── Mode picker — presentation-style 3-card row ─────────────────
+ * Visual reference: the "basic · team · enterprise" slide in the
+ * sealed-env deck. Three side-by-side squares; the selected one
+ * inverts (wax bg + cream text). Cream + ink for the rest.
+ *
+ * JSX:
+ *   .wizard__step (parent) contains:
+ *     h2 .wizard__step-title
+ *     <label .wizard__mode-option [--selected]> ×3
+ *       <input type="radio">              ← visually hidden
+ *       <span .wizard__mode-name>BASIC</span>
+ *       <span .wizard__mode-desc>…</span>
+ *
+ * We use a sibling-aware grid: wrap the 3 labels via the step's
+ * `display: contents`-aware layout. Concretely we target the labels
+ * directly with a grid container created by `.wizard__step` rules
+ * being overridden inside the mode step.
+ *
+ * Implementation note: because we can't add a wrapper without
+ * touching JSX, we use `.wizard__step:has(.wizard__mode-option)`
+ * to swap the step layout to a grid when mode options are present.
+ * Browsers without `:has` (Firefox < 121) fall back to vertical
+ * stack — still readable, just not the presentation row.
+ */
+.wizard__step:has(.wizard__mode-option) {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: auto auto;
+  gap: var(--s4);
+  align-items: start;
+}
+.wizard__step:has(.wizard__mode-option) > .wizard__step-title {
+  grid-column: 1 / -1;
+}
+.wizard__step:has(.wizard__mode-option) > .wizard__step-desc {
+  grid-column: 1 / -1;
+}
+
+.wizard__mode-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--s3);
+  padding: var(--s6) var(--s4);
+  min-height: 200px;
+  background: var(--cream);
+  border: 1px solid rgba(26, 22, 18, 0.1);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s, background 0.15s, color 0.15s, box-shadow 0.15s;
+  user-select: none;
+  position: relative;
+  overflow: hidden;
+}
+.wizard__mode-option:hover {
+  border-color: rgba(168, 32, 26, 0.45);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+.wizard__mode-option--selected {
+  background: var(--wax);
+  border-color: var(--wax-dark);
+  color: var(--cream);
+  box-shadow: 0 8px 24px rgba(168, 32, 26, 0.28);
+  transform: translateY(-2px);
+}
+.wizard__mode-option--selected .wizard__mode-name,
+.wizard__mode-option--selected .wizard__mode-desc {
+  color: var(--cream);
+}
+
+/* Tiny ✓ check mark in top-right of the selected card */
+.wizard__mode-option--selected::after {
+  content: '✓';
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--cream);
+  opacity: 0.85;
+}
+
+/* Hide the native radio but keep it focusable for keyboard / screen
+   readers. We rely on the `--selected` class for visual feedback,
+   which the React state already manages. */
+.wizard__mode-option input[type="radio"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.wizard__mode-option:focus-within {
+  outline: 2px solid rgba(168, 32, 26, 0.45);
+  outline-offset: 2px;
+}
+
+.wizard__mode-name {
+  font-family: var(--font-head);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--ink);
+  margin-top: var(--s2);
+}
+.wizard__mode-desc {
+  font-family: var(--font-body);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--ink-2);
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* ── Source step: select + toggle styling ───────────────────────── */
+
+/* `.wizard__step-templates > label` wraps an inline "Load from file:" + <select> */
+.wizard__step-templates label {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.wizard__step-templates select {
+  flex: 1;
+  max-width: 300px;
+  padding: 6px 10px;
+  border: 1px solid rgba(26, 22, 18, 0.18);
+  border-radius: var(--radius);
+  background: #fcfaf5;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  /* Custom arrow — replaces ugly OS default */
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath fill='%237d6f64' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px;
+  padding-right: 28px;
+}
+.wizard__step-templates select:focus {
+  border-color: var(--wax);
+  box-shadow: 0 0 0 3px rgba(168, 32, 26, 0.12);
+}
+.wizard__step-templates select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Custom checkbox for "Show comments" toggle. We hide the native and
+   render a square via a `::before` on the label's span. */
+.wizard__step-toggle {
+  cursor: pointer;
+}
+.wizard__step-toggle input[type="checkbox"] {
+  /* Hide visually but keep focusable */
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.wizard__step-toggle > span {
+  position: relative;
+  padding-left: 26px;
+  line-height: 18px;
+}
+.wizard__step-toggle > span::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid rgba(26, 22, 18, 0.3);
+  border-radius: 3px;
+  background: #fcfaf5;
+  transition: background 0.15s, border-color 0.15s;
+}
+.wizard__step-toggle > span::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 4px;
+  width: 6px;
+  height: 10px;
+  border: solid var(--cream);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) scale(0);
+  transition: transform 0.12s ease-out;
+}
+.wizard__step-toggle input[type="checkbox"]:checked + span::before {
+  background: var(--wax);
+  border-color: var(--wax);
+}
+.wizard__step-toggle input[type="checkbox"]:checked + span::after {
+  transform: rotate(45deg) scale(1);
+}
+.wizard__step-toggle input[type="checkbox"]:focus-visible + span::before {
+  outline: 2px solid rgba(168, 32, 26, 0.45);
+  outline-offset: 2px;
+}
+.wizard__step-toggle input[type="checkbox"]:disabled + span {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Keys block (step="keys" and step="review") ─────────────────── */
+.wizard__keys {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.wizard__key-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wizard__key-label {
+  font-family: var(--font-head);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.wizard__key-row {
+  display: flex;
+  gap: var(--s2);
+  align-items: stretch;
+}
+
+.wizard__key-value {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--ink);
+  color: var(--cream);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  word-break: break-all;
+  letter-spacing: 0.5px;
+  line-height: 1.4;
+}
+
+.wizard__copy-reminder {
+  font-size: 12px;
+  color: var(--wax-dark);
+  font-style: italic;
+  background: rgba(168, 32, 26, 0.06);
+  border-left: 3px solid var(--wax);
+  border-radius: var(--radius-sm);
+  padding: var(--s2) var(--s3);
+}
+
+/* ── Review summary ─────────────────────────────────────────────── */
+.wizard__review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4);
+  background: var(--cream-2);
+  border-radius: var(--radius);
+}
+
+.wizard__totp-uri {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.wizard__totp-uri-label {
+  font-family: var(--font-head);
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.wizard__totp-uri-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  word-break: break-all;
+  background: #fcfaf5;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(26, 22, 18, 0.08);
+}
+
+/* ── TOTP provisioning block (QR + metadata) ────────────────────── */
+.wizard__totp-block {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--s5);
+  align-items: stretch;
+  padding: var(--s5);
+  background: var(--cream-2);
+  border: 1px solid rgba(26, 22, 18, 0.08);
+  border-radius: var(--radius);
+  margin-top: var(--s2);
+}
+
+.wizard__totp-qr-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--cream);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  box-shadow: var(--shadow-sm);
+  width: 240px;
+  height: 240px;
+}
+
+.wizard__totp-qr {
+  width: 220px;
+  height: 220px;
+  display: block;
+  image-rendering: pixelated;
+}
+
+.wizard__totp-qr-placeholder {
+  width: 220px;
+  height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 24px;
+}
+
+.wizard__totp-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  align-self: center;
+}
+
+.wizard__totp-help {
+  font-family: var(--font-body);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--ink-2);
+  line-height: 1.55;
+  margin: 0;
+}
+
+.wizard__totp-actions {
+  display: flex;
+  gap: var(--s2);
+}
+
+/* Responsive collapse: on narrow widths, stack QR on top of meta */
+@media (max-width: 640px) {
+  .wizard__totp-block {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+  }
+  .wizard__totp-meta {
+    align-items: center;
+  }
+}
+
+/* ── TOTP verification gate (replaces "I have copied" for enterprise) ── */
+.wizard__totp-verify {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s4);
+  background: #fcfaf5;
+  border: 1px dashed rgba(168, 32, 26, 0.35);
+  border-radius: var(--radius);
+}
+
+.wizard__totp-verify--ok {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--s3);
+  background: rgba(45, 106, 58, 0.06);
+  border: 1px solid rgba(45, 106, 58, 0.35);
+  border-style: solid;
+}
+
+.wizard__totp-verify-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--status-ok);
+  color: var(--cream);
+  font-size: 18px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.wizard__totp-verify-label {
+  font-family: var(--font-head);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.wizard__totp-verify-input {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  letter-spacing: 8px;
+  text-align: center;
+  padding: 10px 12px;
+  border: 1px solid rgba(26, 22, 18, 0.18);
+  border-radius: var(--radius);
+  background: var(--cream);
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  max-width: 220px;
+}
+.wizard__totp-verify-input:focus {
+  border-color: var(--wax);
+  box-shadow: 0 0 0 3px rgba(168, 32, 26, 0.12);
+}
+.wizard__totp-verify-input--error {
+  border-color: var(--wax);
+  background: rgba(168, 32, 26, 0.04);
+}
+
+.wizard__totp-verify-hint {
+  font-size: 12px;
+  color: var(--ink-3);
+  font-style: italic;
+  margin: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * Modal (Settings, Unlock, generic dialogs)
+ * ═══════════════════════════════════════════════════════════════════ */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(26, 22, 18, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: var(--s5);
+}
+
+.modal {
+  background: var(--cream);
+  border-radius: var(--radius-lg);
+  width: 520px;
+  max-width: 100%;
+  max-height: 86vh;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal__header {
+  padding: var(--s4) var(--s5);
+  border-bottom: 1px solid rgba(26, 22, 18, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+
+.modal__title {
+  font-family: var(--font-head);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--ink);
+  margin: 0;
+}
+
+.modal__close {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border: none;
+}
+.modal__close:hover {
+  background: var(--cream-2);
+  color: var(--ink);
+}
+
+.modal__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+}
+
+.modal__footer {
+  padding: var(--s3) var(--s5);
+  border-top: 1px solid rgba(26, 22, 18, 0.08);
+  background: var(--cream-2);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s2);
+}
+
+/* ── Settings groups (categorías dentro del modal) ──────────────── */
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding-bottom: var(--s4);
+  border-bottom: 1px solid rgba(26, 22, 18, 0.06);
+}
+.settings-group:last-of-type { border-bottom: none; padding-bottom: 0; }
+
+.settings-group--danger {
+  border: 1px solid rgba(168, 32, 26, 0.25);
+  border-radius: var(--radius);
+  padding: var(--s3) var(--s4);
+  background: rgba(168, 32, 26, 0.04);
+}
+
+.settings-group__label {
+  font-family: var(--font-head);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0;
+}
+
+.settings-group__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.settings-group__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-group__radio,
+.settings-group__radio-label,
+.settings-group__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Custom toggle (same pattern as .wizard__step-toggle) so the
+   Settings modal doesn't show purple browser-default checkboxes. */
+.settings-group__toggle input[type="checkbox"],
+.settings-group__radio input[type="radio"],
+.settings-group__radio-label input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.settings-group__toggle > span,
+.settings-group__radio > span,
+.settings-group__radio-label > span {
+  position: relative;
+  padding-left: 26px;
+  line-height: 18px;
+}
+/* Square (checkbox) */
+.settings-group__toggle > span::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid rgba(26, 22, 18, 0.3);
+  border-radius: 3px;
+  background: #fcfaf5;
+  transition: background 0.15s, border-color 0.15s;
+}
+.settings-group__toggle > span::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 4px;
+  width: 6px;
+  height: 10px;
+  border: solid var(--cream);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) scale(0);
+  transition: transform 0.12s ease-out;
+}
+.settings-group__toggle input:checked + span::before {
+  background: var(--wax);
+  border-color: var(--wax);
+}
+.settings-group__toggle input:checked + span::after {
+  transform: rotate(45deg) scale(1);
+}
+
+/* Circle (radio) */
+.settings-group__radio > span::before,
+.settings-group__radio-label > span::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid rgba(26, 22, 18, 0.3);
+  border-radius: 50%;
+  background: #fcfaf5;
+  transition: background 0.15s, border-color 0.15s;
+}
+.settings-group__radio > span::after,
+.settings-group__radio-label > span::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--wax);
+  transform: scale(0);
+  transition: transform 0.12s ease-out;
+}
+.settings-group__radio input:checked + span::before,
+.settings-group__radio-label input:checked + span::before {
+  border-color: var(--wax);
+}
+.settings-group__radio input:checked + span::after,
+.settings-group__radio-label input:checked + span::after {
+  transform: scale(1);
+}
+
+/* Generic styled <select> + native inputs inside any settings field
+   so we don't get OS-default look. */
+.settings-group__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.settings-group__field > span:first-child {
+  font-family: var(--font-head);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.settings-group__field select,
+.settings-group__field input[type="text"],
+.settings-group__field input[type="password"],
+.settings-group__field input[type="number"] {
+  padding: 6px 10px;
+  border: 1px solid rgba(26, 22, 18, 0.18);
+  border-radius: var(--radius);
+  background: #fcfaf5;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+/* Error state for fields with .input--error */
+.settings-group__field input.input--error {
+  border-color: var(--wax);
+  box-shadow: 0 0 0 3px rgba(168, 32, 26, 0.08);
+}
+.settings-group__field input:focus,
+.settings-group__field select:focus {
+  border-color: var(--wax);
+  box-shadow: 0 0 0 3px rgba(168, 32, 26, 0.12);
+}
+.settings-group__field select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath fill='%237d6f64' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px;
+  padding-right: 28px;
+  cursor: pointer;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * Unlock dialog (reuses .modal but adds its own bits)
+ * ═══════════════════════════════════════════════════════════════════ */
+
+.unlock-dialog__path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  background: var(--cream-2);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  word-break: break-all;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * Form errors
+ * ═══════════════════════════════════════════════════════════════════ */
+
+.field-error {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--wax);
+  margin-top: 2px;
+}
+.field-error--banner {
+  font-style: normal;
+  background: rgba(168, 32, 26, 0.08);
+  border-left: 3px solid var(--wax);
+  padding: var(--s2) var(--s3);
+  border-radius: var(--radius-sm);
+  color: var(--wax-dark);
+  font-size: 13px;
+}
+
+/* ── Unlock dialog · advanced toggle + mint panel ──────────── */
+.unlock-dialog__advanced-toggle {
+  background: transparent;
+  border: none;
+  color: var(--ink-3);
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-style: italic;
+  padding: 0;
+  margin-top: calc(-1 * var(--s2));
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(26, 22, 18, 0.2);
+  text-underline-offset: 3px;
+  align-self: flex-start;
+}
+.unlock-dialog__advanced-toggle:hover {
+  color: var(--ink-2);
+  text-decoration-color: var(--ink-2);
+}
+
+.unlock-dialog__mint {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding-top: var(--s3);
+  border-top: 1px dashed rgba(26, 22, 18, 0.12);
+  margin-top: var(--s2);
+}
+
+.unlock-dialog__minted {
+  background: var(--cream-3);
+  border: 1px solid rgba(168, 32, 26, 0.25);
+  border-radius: var(--radius);
+  padding: var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.unlock-dialog__minted-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+
+.unlock-dialog__minted-label {
+  font-family: var(--font-head);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--wax);
+}
+
+.unlock-dialog__minted-text {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--cream);
+  border: 1px solid rgba(26, 22, 18, 0.12);
+  border-radius: var(--radius-sm);
+  padding: var(--s2);
+  color: var(--ink);
+  resize: none;
+  width: 100%;
+  word-break: break-all;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  outline: none;
+}
+.unlock-dialog__minted-text:focus {
+  border-color: var(--wax);
+  box-shadow: 0 0 0 3px rgba(168, 32, 26, 0.12);
+}
+
+.unlock-dialog__minted-hint {
+  font-family: var(--font-body);
+  font-style: italic;
+  font-size: 11px;
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+
+/* ── Unlock dialog · .env.local autoload note ─────────────── */
+.unlock-dialog__autoload-note {
+  font-family: var(--font-body);
+  font-style: italic;
+  font-size: 12px;
+  color: var(--ink-3);
+  margin: 0;
+}
+.unlock-dialog__autoload-note code {
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 11px;
+  color: var(--ink-2);
+  background: var(--cream-2);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+}
+
+.unlock-dialog__autoload-clear {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin-left: var(--s1);
+  color: var(--wax);
+  font-family: var(--font-body);
+  font-style: italic;
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(168, 32, 26, 0.4);
+  text-underline-offset: 2px;
+}
+.unlock-dialog__autoload-clear:hover {
+  color: var(--wax-dark);
+  text-decoration-color: var(--wax-dark);
+}
+
+/* ── Unlock dialog · OTP input + field hints ──────────────── */
+.unlock-dialog__otp-input {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: 6px;
+  text-align: center;
+  padding: var(--s2) var(--s3);
+}
+
+.unlock-dialog__hint {
+  font-family: var(--font-body);
+  font-style: italic;
+  font-size: 11px;
+  color: var(--ink-3);
+  line-height: 1.5;
+  margin-top: 4px;
+}
+.unlock-dialog__hint code {
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 10px;
+  background: var(--cream-2);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
 }
