@@ -131,6 +131,42 @@ export interface MintUnsealTokenResponse {
   expUnix: number;
 }
 
+// ─── credstore ────────────────────────────────────────────────────────────────
+// OS Credential Manager-backed credential persistence (Tier A).
+// vault_id = sha256(absolutePath) is computed in Rust; we just pass the path.
+
+export interface VaultCredentials {
+  master: string;
+  signing?: string;
+  totp?: string;
+  savedAt: string;
+}
+
+export interface SaveCredsRequest {
+  absolutePath: string;
+  credentials: VaultCredentials;
+  passphrase: string;
+}
+
+export interface LoadCredsRequest {
+  absolutePath: string;
+  passphrase: string;
+}
+
+export interface HasCredsRequest {
+  absolutePath: string;
+}
+
+export interface ClearCredsRequest {
+  absolutePath: string;
+}
+
+export interface ChangePassphraseRequest {
+  absolutePath: string;
+  oldPassphrase: string;
+  newPassphrase: string;
+}
+
 // ─── read_local_env ───────────────────────────────────────────────────────────
 // Opportunistically reads `<folder>/.env.local` and returns SEALED_ENV_* credentials.
 
