@@ -1,0 +1,149 @@
+# Publish sealed-env-studio-bin to the AUR.
+#
+# Trigger: a `studio-v*` tag has just been pushed and the corresponding
+#   release has the Linux .deb attached (release.yml runs in parallel; we
+#   wait until the .deb is downloadable).
+#
+# Secrets required:
+#   AUR_SSH_PRIVATE_KEY  — Ed25519 key registered in the AUR account
+#   AUR_SSH_KNOWN_HOSTS  — output of `ssh-keyscan aur.archlinux.org`
+#
+# Pipeline:
+#   1. Wait for the .deb to be available on the release (poll up to ~5 min)
+#   2. Fetch the .deb, compute sha256
+#   3. Render PKGBUILD with the new pkgver / pkgrel=1 / sha256
+#   4. Generate .SRCINFO via makepkg inside an Arch container
+#   5. Push PKGBUILD + .SRCINFO to ssh://aur@aur.archlinux.org/sealed-env-studio-bin.git
+
+name: AUR publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. studio-v0.1.0-alpha.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aur-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Push to AUR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Resolve tag + version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${{ github.event.release.tag_name }}"
+          fi
+          # Strip studio-v prefix: studio-v0.1.0-alpha.1 → 0.1.0-alpha.1
+          PKGVER="${TAG#studio-v}"
+          # AUR pkgver is alphanumeric + dots — Tauri uses hyphenated pre-release
+          # (e.g. 0.1.0-alpha.1). Replace `-` with `_` for pkgver compatibility,
+          # keep the original for the source URL.
+          AUR_PKGVER="${PKGVER//-/_}"
+          echo "tag=$TAG"           >> "$GITHUB_OUTPUT"
+          echo "pkgver=$PKGVER"     >> "$GITHUB_OUTPUT"
+          echo "aur_pkgver=$AUR_PKGVER" >> "$GITHUB_OUTPUT"
+
+      - name: Download .deb from the release
+        id: download
+        run: |
+          mkdir -p artifact
+          # The Tauri release workflow names the .deb after the tauri.conf.json
+          # productName: sealed-env-studio_${version}_amd64.deb
+          DEB_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.ver.outputs.tag }}/sealed-env-studio_${{ steps.ver.outputs.pkgver }}_amd64.deb"
+          echo "Fetching $DEB_URL"
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsSL --retry 3 "$DEB_URL" -o "artifact/pkg.deb"; then
+              break
+            fi
+            echo "Asset not yet available, retry $i/10 in 30s..."
+            sleep 30
+          done
+          if [ ! -s "artifact/pkg.deb" ]; then
+            echo "::error::Could not download .deb after 10 retries"
+            exit 1
+          fi
+          SHA=$(sha256sum artifact/pkg.deb | awk '{print $1}')
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Downloaded ($(du -h artifact/pkg.deb | cut -f1)), sha256=$SHA"
+
+      - name: Render PKGBUILD
+        run: |
+          mkdir -p out
+          # Substitute version + sha into the source PKGBUILD template
+          sed \
+            -e "s/^pkgver=.*/pkgver=${{ steps.ver.outputs.aur_pkgver }}/" \
+            -e "s/^pkgrel=.*/pkgrel=1/" \
+            -e "s|sha256sums=.*|sha256sums=('${{ steps.download.outputs.sha256 }}')|" \
+            packaging/aur/PKGBUILD > out/PKGBUILD
+          # The source URL inside PKGBUILD references $pkgver which is the AUR form.
+          # If the actual tag has hyphens (alpha.1 etc), patch the URL directly.
+          sed -i "s|studio-v\$pkgver|studio-v${{ steps.ver.outputs.pkgver }}|" out/PKGBUILD
+          sed -i "s|_\${pkgver}_amd64|_${{ steps.ver.outputs.pkgver }}_amd64|" out/PKGBUILD
+          echo "=== Rendered PKGBUILD ==="
+          cat out/PKGBUILD
+
+      - name: Generate .SRCINFO (via Arch container)
+        run: |
+          # makepkg only runs on Arch. Use the official archlinux image as a
+          # one-shot to produce .SRCINFO.
+          docker run --rm -v "$PWD/out:/work" -w /work archlinux:base-devel \
+            bash -c "pacman -Sy --noconfirm && makepkg --printsrcinfo > .SRCINFO"
+          echo "=== Generated .SRCINFO ==="
+          cat out/.SRCINFO
+
+      - name: Configure SSH for AUR
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          AUR_SSH_KNOWN_HOSTS: ${{ secrets.AUR_SSH_KNOWN_HOSTS }}
+        run: |
+          if [ -z "$AUR_SSH_PRIVATE_KEY" ] || [ -z "$AUR_SSH_KNOWN_HOSTS" ]; then
+            echo "::error::AUR_SSH_PRIVATE_KEY and AUR_SSH_KNOWN_HOSTS secrets must be set"
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          printf '%s\n' "$AUR_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          cat >> ~/.ssh/config <<'EOF'
+          Host aur.archlinux.org
+            User aur
+            IdentityFile ~/.ssh/aur
+            IdentitiesOnly yes
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Push to AUR
+        run: |
+          git config --global user.name  "sealed-env-studio CI"
+          git config --global user.email "ci@sealed-env-studio.dev"
+          git clone ssh://aur@aur.archlinux.org/sealed-env-studio-bin.git aur-repo
+          cp out/PKGBUILD out/.SRCINFO aur-repo/
+          cd aur-repo
+          # Idempotent: if nothing changed (re-run on same tag), skip.
+          if git diff --quiet; then
+            echo "No changes to push — already at this version."
+            exit 0
+          fi
+          git add PKGBUILD .SRCINFO
+          git commit -m "upgpkg: sealed-env-studio-bin ${{ steps.ver.outputs.aur_pkgver }}-1"
+          git push origin master
