@@ -1,4 +1,4 @@
-import type { SealedMode } from '../data/mock';
+import type { SealedMode } from '../lib/types';
 
 interface Props {
   mode: SealedMode;

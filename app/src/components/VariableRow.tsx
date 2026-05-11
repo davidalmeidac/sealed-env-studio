@@ -1,7 +1,7 @@
-import type { SealedVariable } from '../data/mock';
+import type { ParsedVariable } from '../lib/types';
 
 interface Props {
-  variable: SealedVariable;
+  variable: ParsedVariable;
   revealed: boolean;
   onToggleReveal: () => void;
   onEdit: () => void;
