@@ -101,7 +101,10 @@ jobs:
             args: ''
           - label: macOS universal
             os: macos-latest
-            target: universal-apple-darwin
+            # `universal-apple-darwin` is a Tauri lipo-output concept, not a
+            # rustup target. We install both real targets here; tauri-action
+            # builds each and merges them when --target=universal-apple-darwin.
+            target: 'aarch64-apple-darwin,x86_64-apple-darwin'
             args: '--target universal-apple-darwin'
           - label: Windows x86_64
             os: windows-latest
