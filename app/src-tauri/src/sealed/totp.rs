@@ -1,5 +1,5 @@
-use super::errors::{SealedError, TokenInvalidReason};
 use super::crypto::hmac_sha256;
+use super::errors::{SealedError, TokenInvalidReason};
 use base64::{engine::general_purpose::STANDARD as B64_STANDARD, Engine};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -42,21 +42,27 @@ impl Default for OpsCache {
 /// Only standard base64 alphabet is allowed: A-Za-z0-9+/ with up to 2 '=' padding.
 pub fn validate_base64_charset(s: &str) -> Result<(), SealedError> {
     // Manual check is more reliable than regex for this pattern:
-    let chars_valid = s.chars().all(|c| {
-        c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='
-    });
+    let chars_valid = s
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=');
     if !chars_valid {
-        return Err(SealedError::TokenInvalid(TokenInvalidReason::MalformedEpoch));
+        return Err(SealedError::TokenInvalid(
+            TokenInvalidReason::MalformedEpoch,
+        ));
     }
     // Padding must only appear at the end (max 2)
     let without_padding = s.trim_end_matches('=');
     let padding_count = s.len() - without_padding.len();
     if padding_count > 2 {
-        return Err(SealedError::TokenInvalid(TokenInvalidReason::MalformedEpoch));
+        return Err(SealedError::TokenInvalid(
+            TokenInvalidReason::MalformedEpoch,
+        ));
     }
     // No '=' allowed in the non-padding part
     if without_padding.contains('=') {
-        return Err(SealedError::TokenInvalid(TokenInvalidReason::MalformedEpoch));
+        return Err(SealedError::TokenInvalid(
+            TokenInvalidReason::MalformedEpoch,
+        ));
     }
     Ok(())
 }
@@ -131,6 +137,9 @@ struct UnsealToken {
     header_part: String,
     payload_part: String,
     sig_bytes: Vec<u8>,
+    /// Parsed from the payload but not validated — informational only.
+    /// Kept for forensic / debug logging surfaces in future iterations.
+    #[allow(dead_code)]
     iss: String,
     iat: i64,
     exp: i64,
@@ -218,8 +227,10 @@ pub fn verify_unseal_token(
 
     // SEC-R6: token lifetime must be <= 600 seconds
     let lifetime = t.exp - t.iat;
-    if lifetime > 600 || lifetime < 0 {
-        return Err(SealedError::TokenInvalid(TokenInvalidReason::LifetimeTooLong));
+    if !(0..=600).contains(&lifetime) {
+        return Err(SealedError::TokenInvalid(
+            TokenInvalidReason::LifetimeTooLong,
+        ));
     }
 
     // Check expiry against current time
@@ -271,8 +282,10 @@ pub fn verify_unseal_token_at(
         .map_err(|_| SealedError::TokenInvalid(TokenInvalidReason::MalformedEpoch))?;
 
     let lifetime = t.exp - t.iat;
-    if lifetime > 600 || lifetime < 0 {
-        return Err(SealedError::TokenInvalid(TokenInvalidReason::LifetimeTooLong));
+    if !(0..=600).contains(&lifetime) {
+        return Err(SealedError::TokenInvalid(
+            TokenInvalidReason::LifetimeTooLong,
+        ));
     }
 
     if t.exp <= now_unix {
@@ -380,7 +393,10 @@ mod tests {
         .unwrap();
 
         // Identical inputs MUST produce different tokens (uuid v4 ops_id)
-        assert_ne!(t1, t2, "two builds must produce different tokens (ops_id uniqueness)");
+        assert_ne!(
+            t1, t2,
+            "two builds must produce different tokens (ops_id uniqueness)"
+        );
     }
 
     #[test]
@@ -458,7 +474,7 @@ mod tests {
         let p_enc = URL_SAFE_NO_PAD.encode(&payload);
         let signing_input = format!("{}.{}", h_enc, p_enc);
         let sig = hmac_sha256(derived_key, signing_input.as_bytes());
-        let sig_enc = URL_SAFE_NO_PAD.encode(&sig);
+        let sig_enc = URL_SAFE_NO_PAD.encode(sig);
 
         format!("usl_{}.{}.{}", h_enc, p_enc, sig_enc)
     }
@@ -489,7 +505,9 @@ mod tests {
         let result = validate_base64_charset(malformed);
         assert_eq!(
             result,
-            Err(SealedError::TokenInvalid(TokenInvalidReason::MalformedEpoch))
+            Err(SealedError::TokenInvalid(
+                TokenInvalidReason::MalformedEpoch
+            ))
         );
     }
 
@@ -549,7 +567,9 @@ mod tests {
         let result = verify_unseal_token_at(&token, &key, &mut cache, now);
         assert_eq!(
             result,
-            Err(SealedError::TokenInvalid(TokenInvalidReason::LifetimeTooLong))
+            Err(SealedError::TokenInvalid(
+                TokenInvalidReason::LifetimeTooLong
+            ))
         );
     }
 
@@ -599,7 +619,9 @@ mod tests {
         let result = verify_unseal_token_at(&token, &key, &mut cache, now);
         assert_eq!(
             result,
-            Err(SealedError::TokenInvalid(TokenInvalidReason::MalformedEpoch))
+            Err(SealedError::TokenInvalid(
+                TokenInvalidReason::MalformedEpoch
+            ))
         );
     }
 }

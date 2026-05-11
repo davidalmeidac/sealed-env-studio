@@ -175,7 +175,9 @@ pub fn init_keys(req: InitKeysRequest) -> Result<InitKeysResponse, SealedError> 
 
 /// Inspect a directory for .env templates and existing .env.sealed siblings.
 #[tauri::command]
-pub fn inspect_directory(req: InspectDirectoryRequest) -> Result<InspectDirectoryResponse, SealedError> {
+pub fn inspect_directory(
+    req: InspectDirectoryRequest,
+) -> Result<InspectDirectoryResponse, SealedError> {
     let folder = Path::new(&req.folder_path);
 
     if !folder.is_dir() {
@@ -190,8 +192,8 @@ pub fn inspect_directory(req: InspectDirectoryRequest) -> Result<InspectDirector
     let mut has_gitignore = false;
     let mut gitignore_covers_env = false;
 
-    let entries = std::fs::read_dir(folder)
-        .map_err(|e| SealedError::ValidationError(e.to_string()))?;
+    let entries =
+        std::fs::read_dir(folder).map_err(|e| SealedError::ValidationError(e.to_string()))?;
 
     for entry in entries.flatten() {
         let name = entry.file_name();
@@ -292,7 +294,9 @@ pub fn seal_file(req: SealFileRequest) -> Result<SealFileResponse, SealedError> 
 
 /// Ensure `.env` is in `.gitignore`. Idempotent.
 #[tauri::command]
-pub fn ensure_gitignore(req: EnsureGitignoreRequest) -> Result<EnsureGitignoreResponse, SealedError> {
+pub fn ensure_gitignore(
+    req: EnsureGitignoreRequest,
+) -> Result<EnsureGitignoreResponse, SealedError> {
     let folder = Path::new(&req.folder_path);
     let gitignore_path = folder.join(".gitignore");
 
@@ -461,10 +465,7 @@ pub fn get_recents(state: State<'_, AppState>) -> Result<GetRecentsResponse, Sea
 
 /// Add or update an entry in the recents list.
 #[tauri::command]
-pub fn push_recent(
-    req: PushRecentRequest,
-    state: State<'_, AppState>,
-) -> Result<(), SealedError> {
+pub fn push_recent(req: PushRecentRequest, state: State<'_, AppState>) -> Result<(), SealedError> {
     let path = recents_path(&state)?;
     workspace::push_recent(&path, req.entry)
         .map_err(|e| SealedError::ValidationError(e.to_string()))
@@ -485,8 +486,7 @@ pub fn remove_recent(
 #[tauri::command]
 pub fn clear_recents(state: State<'_, AppState>) -> Result<(), SealedError> {
     let path = recents_path(&state)?;
-    workspace::clear_recents(&path)
-        .map_err(|e| SealedError::ValidationError(e.to_string()))
+    workspace::clear_recents(&path).map_err(|e| SealedError::ValidationError(e.to_string()))
 }
 
 /// Return the current app settings.
@@ -524,8 +524,8 @@ pub fn read_local_env(req: ReadLocalEnvRequest) -> Result<ReadLocalEnvResponse, 
     if !path.is_file() {
         return Ok(ReadLocalEnvResponse::default());
     }
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| SealedError::ValidationError(e.to_string()))?;
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| SealedError::ValidationError(e.to_string()))?;
 
     let mut out = ReadLocalEnvResponse {
         found: true,
@@ -544,25 +544,19 @@ pub fn read_local_env(req: ReadLocalEnvRequest) -> Result<ReadLocalEnvResponse, 
         let value = strip_quotes(value.trim());
 
         match key {
-            "SEALED_ENV_KEY" => {
-                if hex_well_formed(value, 64) {
-                    out.master_key_hex = Some(value.to_string());
-                }
+            "SEALED_ENV_KEY" if hex_well_formed(value, 64) => {
+                out.master_key_hex = Some(value.to_string());
             }
-            "SEALED_ENV_SIGNING_KEY" => {
-                if hex_well_formed(value, 64) {
-                    out.signing_key_hex = Some(value.to_string());
-                }
+            "SEALED_ENV_SIGNING_KEY" if hex_well_formed(value, 64) => {
+                out.signing_key_hex = Some(value.to_string());
             }
-            "SEALED_ENV_TOTP_SECRET" => {
-                if hex_well_formed(value, 40) {
-                    out.totp_secret_hex = Some(value.to_string());
-                }
+            "SEALED_ENV_TOTP_SECRET" if hex_well_formed(value, 40) => {
+                out.totp_secret_hex = Some(value.to_string());
             }
-            "SEALED_ENV_UNSEAL_TOKEN" => {
-                if value.starts_with("usl_") && !value.contains(char::is_whitespace) {
-                    out.unseal_token = Some(value.to_string());
-                }
+            "SEALED_ENV_UNSEAL_TOKEN"
+                if value.starts_with("usl_") && !value.contains(char::is_whitespace) =>
+            {
+                out.unseal_token = Some(value.to_string());
             }
             _ => {}
         }
@@ -639,7 +633,8 @@ pub fn mint_unseal_token(
         .decode(&file.salt)
         .map_err(|_| SealedError::FormatInvalid)?;
 
-    let derived_key = crate::sealed::crypto::kdf_derive(&master_key, &salt_bytes, &file.kdf_params)?;
+    let derived_key =
+        crate::sealed::crypto::kdf_derive(&master_key, &salt_bytes, &file.kdf_params)?;
 
     let ttl = req.ttl_seconds.unwrap_or(60).clamp(5, 600);
     let token = build_unseal_token(BuildTokenInput {
@@ -692,11 +687,8 @@ pub fn decrypt_vault(
                 let salt_bytes = B64
                     .decode(&file.salt)
                     .map_err(|_| SealedError::FormatInvalid)?;
-                let derived_key = crate::sealed::crypto::kdf_derive(
-                    &master_key,
-                    &salt_bytes,
-                    &file.kdf_params,
-                )?;
+                let derived_key =
+                    crate::sealed::crypto::kdf_derive(&master_key, &salt_bytes, &file.kdf_params)?;
                 Some(build_unseal_token(BuildTokenInput {
                     derived_key: &derived_key,
                     totp_secret: &totp_secret,
@@ -756,7 +748,10 @@ mod tests {
 
     #[test]
     fn init_keys_basic_returns_only_master() {
-        let resp = init_keys(InitKeysRequest { mode: "basic".to_string() }).unwrap();
+        let resp = init_keys(InitKeysRequest {
+            mode: "basic".to_string(),
+        })
+        .unwrap();
         assert_eq!(resp.master_key_hex.len(), 64);
         assert!(resp.signing_key_hex.is_none());
         assert!(resp.totp_secret_hex.is_none());
@@ -764,7 +759,10 @@ mod tests {
 
     #[test]
     fn init_keys_team_returns_two_keys() {
-        let resp = init_keys(InitKeysRequest { mode: "team".to_string() }).unwrap();
+        let resp = init_keys(InitKeysRequest {
+            mode: "team".to_string(),
+        })
+        .unwrap();
         assert_eq!(resp.master_key_hex.len(), 64);
         assert!(resp.signing_key_hex.is_some());
         assert_eq!(resp.signing_key_hex.unwrap().len(), 64);
@@ -773,7 +771,10 @@ mod tests {
 
     #[test]
     fn init_keys_enterprise_returns_three_keys() {
-        let resp = init_keys(InitKeysRequest { mode: "enterprise".to_string() }).unwrap();
+        let resp = init_keys(InitKeysRequest {
+            mode: "enterprise".to_string(),
+        })
+        .unwrap();
         assert_eq!(resp.master_key_hex.len(), 64);
         assert!(resp.signing_key_hex.is_some());
         assert_eq!(resp.signing_key_hex.unwrap().len(), 64);
@@ -806,21 +807,31 @@ mod tests {
         let folder = dir.path().to_str().unwrap().to_string();
 
         // First call: creates .gitignore
-        let resp1 = ensure_gitignore(EnsureGitignoreRequest { folder_path: folder.clone() }).unwrap();
+        let resp1 = ensure_gitignore(EnsureGitignoreRequest {
+            folder_path: folder.clone(),
+        })
+        .unwrap();
         assert!(resp1.modified);
 
         // Second call: idempotent
-        let resp2 = ensure_gitignore(EnsureGitignoreRequest { folder_path: folder }).unwrap();
+        let resp2 = ensure_gitignore(EnsureGitignoreRequest {
+            folder_path: folder,
+        })
+        .unwrap();
         assert!(!resp2.modified);
     }
 
     #[test]
     fn inspect_directory_returns_templates_and_sealed() {
-        use tempfile::TempDir;
         use std::fs;
+        use tempfile::TempDir;
         let dir = TempDir::new().unwrap();
         fs::write(dir.path().join(".env.example"), "KEY=val").unwrap();
-        fs::write(dir.path().join("app.env.sealed"), "SEALED-ENV-V1 MODE=basic\n").unwrap();
+        fs::write(
+            dir.path().join("app.env.sealed"),
+            "SEALED-ENV-V1 MODE=basic\n",
+        )
+        .unwrap();
 
         let resp = inspect_directory(InspectDirectoryRequest {
             folder_path: dir.path().to_str().unwrap().to_string(),
@@ -834,8 +845,8 @@ mod tests {
 
     #[test]
     fn open_sealed_file_returns_mode_and_content() {
-        use tempfile::TempDir;
         use std::fs;
+        use tempfile::TempDir;
         let dir = TempDir::new().unwrap();
         let sealed_content = "SEALED-ENV-V1 MODE=team\nKDF=argon2id\nKDF-PARAMS=t=3,m=65536,p=4\nSALT=AAAA\nNONCE=BBBB\nAAD-DIGEST=CCCC\nHMAC=DDDD\nCREATED=2026-01-01T00:00:00.000Z\n\nEEEE";
         let path = dir.path().join("test.env.sealed");
@@ -852,8 +863,8 @@ mod tests {
 
     #[test]
     fn open_sealed_file_rejects_unknown_mode() {
-        use tempfile::TempDir;
         use std::fs;
+        use tempfile::TempDir;
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("bad.env.sealed");
         fs::write(&path, "SEALED-ENV-V1 MODE=supermode\n").unwrap();
@@ -1044,7 +1055,8 @@ SEALED_ENV_KEY=4242424242424242424242424242424242424242424242424242424242424242\
         use std::fs;
         use tempfile::TempDir;
         let dir = TempDir::new().unwrap();
-        let content = "SEALED_ENV_KEY=\"4242424242424242424242424242424242424242424242424242424242424242\"\n";
+        let content =
+            "SEALED_ENV_KEY=\"4242424242424242424242424242424242424242424242424242424242424242\"\n";
         fs::write(dir.path().join(".env.local"), content).unwrap();
 
         let resp = read_local_env(ReadLocalEnvRequest {
@@ -1076,7 +1088,10 @@ SEALED_ENV_SIGNING_KEY=333333333333333333333333333333333333333333333333333333333
         .unwrap();
         assert!(resp.found);
         assert_eq!(resp.master_key_hex, None, "invalid hex must be dropped");
-        assert!(resp.signing_key_hex.is_some(), "valid sibling must pass through");
+        assert!(
+            resp.signing_key_hex.is_some(),
+            "valid sibling must pass through"
+        );
     }
 
     #[test]

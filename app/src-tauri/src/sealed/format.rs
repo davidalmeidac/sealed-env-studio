@@ -148,12 +148,12 @@ const FIELD_ORDER: &[&str] = &[
     "KDF-PARAMS",
     "SALT",
     "NONCE",
-    "EPOCH-COMMIT",  // enterprise only
+    "EPOCH-COMMIT",   // enterprise only
     "CHALLENGE-BIND", // enterprise only
     "AAD-DIGEST",
-    "HMAC",          // team + enterprise
+    "HMAC", // team + enterprise
     "CREATED",
-    "ROTATED",       // optional
+    "ROTATED", // optional
 ];
 
 fn parse_metadata(
@@ -196,8 +196,12 @@ fn parse_metadata(
     let kdf_params_str = get("KDF-PARAMS").ok_or(SealedError::FormatInvalid)?;
     let salt = get("SALT").ok_or(SealedError::FormatInvalid)?.to_string();
     let nonce = get("NONCE").ok_or(SealedError::FormatInvalid)?.to_string();
-    let aad_digest = get("AAD-DIGEST").ok_or(SealedError::FormatInvalid)?.to_string();
-    let created = get("CREATED").ok_or(SealedError::FormatInvalid)?.to_string();
+    let aad_digest = get("AAD-DIGEST")
+        .ok_or(SealedError::FormatInvalid)?
+        .to_string();
+    let created = get("CREATED")
+        .ok_or(SealedError::FormatInvalid)?
+        .to_string();
     let rotated = get("ROTATED").map(|s| s.to_string());
     let hmac = get("HMAC").map(|s| s.to_string());
     let epoch_commit = get("EPOCH-COMMIT").map(|s| s.to_string());
@@ -483,14 +487,28 @@ mod tests {
     #[test]
     fn parse_scrypt_params() {
         let f = parse(basic_serialized()).expect("parse");
-        assert_eq!(f.kdf_params, KdfParams::Scrypt { n: 32768, r: 8, p: 1 });
+        assert_eq!(
+            f.kdf_params,
+            KdfParams::Scrypt {
+                n: 32768,
+                r: 8,
+                p: 1
+            }
+        );
     }
 
     #[test]
     fn parse_argon2id_params() {
         let input = "SEALED-ENV-V1 MODE=basic\nKDF=argon2id\nKDF-PARAMS=t=3,m=65536,p=4\nSALT=AAAAAAAAAAAAAAAAAAAAAA==\nNONCE=AAAAAAAAAAAAAAAA\nAAD-DIGEST=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nCREATED=2026-01-01T00:00:00Z\n\nAAAAAAAAA=";
         let f = parse(input).expect("parse argon2id");
-        assert_eq!(f.kdf_params, KdfParams::Argon2id { t: 3, m: 65536, p: 4 });
+        assert_eq!(
+            f.kdf_params,
+            KdfParams::Argon2id {
+                t: 3,
+                m: 65536,
+                p: 4
+            }
+        );
     }
 
     #[test]

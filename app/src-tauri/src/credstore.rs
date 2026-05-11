@@ -115,16 +115,12 @@ pub fn unseal_blob(
     let key = crypto::kdf_derive(passphrase.as_bytes(), &parsed.salt, &kdf_params)
         .map_err(|_| SealedError::DecryptFailed)?;
 
-    let plaintext = crypto::aes256gcm_decrypt(
-        &key,
-        &parsed.nonce,
-        &parsed.ciphertext,
-        vault_id.as_bytes(),
-    )
-    .map_err(|_| SealedError::DecryptFailed)?;
+    let plaintext =
+        crypto::aes256gcm_decrypt(&key, &parsed.nonce, &parsed.ciphertext, vault_id.as_bytes())
+            .map_err(|_| SealedError::DecryptFailed)?;
 
-    let creds: Credentials = serde_json::from_slice(&plaintext)
-        .map_err(|_| SealedError::DecryptFailed)?;
+    let creds: Credentials =
+        serde_json::from_slice(&plaintext).map_err(|_| SealedError::DecryptFailed)?;
 
     Ok(creds)
 }
